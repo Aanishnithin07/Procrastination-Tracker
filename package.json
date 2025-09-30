@@ -1,0 +1,10 @@
+{
+  "name": "procrasti-track",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Playful procrastination tracker — static, deploy-ready.",
+  "scripts": {
+    "preview": "npx http-server -c-1 ."
+  }
+}
+
