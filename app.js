@@ -29,12 +29,15 @@ function emojiFor(text='') {
 }
 
 /* Rendering */
-const listEl = document.getElementById('list');
-const totalCountEl = document.getElementById('totalCount');
-const totalMinutesEl = document.getElementById('totalMinutes');
-const heatBar = document.getElementById('heatBar');
-const heatPercent = document.getElementById('heatPercent');
-const suggestionsEl = document.getElementById('suggestions');
+let listEl, totalCountEl, totalMinutesEl, heatBar, heatPercent, suggestionsEl;
+document.addEventListener('DOMContentLoaded', ()=>{
+  listEl = document.getElementById('list');
+  totalCountEl = document.getElementById('totalCount');
+  totalMinutesEl = document.getElementById('totalMinutes');
+  heatBar = document.getElementById('heatBar');
+  heatPercent = document.getElementById('heatPercent');
+  suggestionsEl = document.getElementById('suggestions');
+});
 
 function renderList(){
   listEl.innerHTML = '';
@@ -108,6 +111,7 @@ function generateSuggestion(log){
 }
 
 /* Events */
+document.addEventListener('DOMContentLoaded', ()=>{
 document.getElementById('logForm').addEventListener('submit', (e)=>{
   e.preventDefault();
   const intended = document.getElementById('intended').value.trim();
@@ -167,6 +171,7 @@ document.getElementById('importBtn').addEventListener('click', ()=>{
   };
   input.click();
 });
+});
 
 /* Init */
 function init(){
@@ -177,5 +182,5 @@ function init(){
     suggestionsEl.textContent = s.text + ' • Reward: ' + s.reward;
   }
 }
-init();
+document.addEventListener('DOMContentLoaded', init);
 
