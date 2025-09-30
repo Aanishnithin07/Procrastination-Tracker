@@ -60,17 +60,25 @@
         </form>
 
         <div class="mt-5 border-t border-white/6 pt-4">
-          <div class="flex justify-between">
+          <div class="grid grid-cols-2 gap-4 md:grid-cols-5">
             <div>
               <div class="text-xs text-sky-200/70">Total logs</div>
               <div id="totalCount" class="text-2xl font-bold">0</div>
+            </div>
+            <div>
+              <div class="text-xs text-sky-200/70">Distractions</div>
+              <div id="totalDistractions" class="text-2xl font-bold">0</div>
+            </div>
+            <div>
+              <div class="text-xs text-sky-200/70">Productive logs</div>
+              <div id="totalProductive" class="text-2xl font-bold">0</div>
             </div>
             <div>
               <div class="text-xs text-sky-200/70">Minutes wasted</div>
               <div id="totalMinutes" class="text-2xl font-bold">0</div>
             </div>
             <div>
-              <div class="text-xs text-sky-200/70">Productive minutes</div>
+              <div class="text-xs text-sky-200/70">Minutes productive</div>
               <div id="productiveMinutes" class="text-2xl font-bold">0</div>
             </div>
           </div>
@@ -101,10 +109,19 @@
       <section class="glass p-5 rounded-2xl">
         <div class="flex items-center justify-between">
           <h2 class="text-lg font-semibold">Insights</h2>
-          <div class="text-xs text-sky-200/60">Top distractions</div>
+          <div class="text-xs text-sky-200/60">Top distractions & productive tasks</div>
         </div>
 
-        <canvas id="topChart" class="mt-4"></canvas>
+        <div class="grid grid-cols-1 gap-6 mt-4">
+          <div>
+            <div class="text-xs text-sky-200/60">Top distractions</div>
+            <canvas id="topChart" class="mt-2"></canvas>
+          </div>
+          <div>
+            <div class="text-xs text-sky-200/60">Top productive tasks</div>
+            <canvas id="topProdChart" class="mt-2"></canvas>
+          </div>
+        </div>
 
         <div class="mt-6">
           <h3 class="font-semibold">Smart suggestion</h3>

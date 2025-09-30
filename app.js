@@ -28,6 +28,20 @@ function emojiFor(text='') {
   return pool[Math.abs(h) % pool.length];
 }
 
+function productivityEmojiFor(text=''){
+  text = (text||'').toLowerCase();
+  const mapping = [
+    [['study','read','book','notes','course','learn'],'📘'],
+    [['finish','done','complete','ship','submit'],'✅'],
+    [['exercise','gym','run','walk','yoga'],'💪'],
+    [['code','program','build','fix','debug'],'💻'],
+  ];
+  for (const [keys, emoji] of mapping) {
+    for (const k of keys) if (text.includes(k)) return emoji;
+  }
+  return '✨';
+}
+
 /* Rendering */
 let listEl, totalCountEl, totalMinutesEl, productiveMinutesEl, heatBar, heatPercent, suggestionsEl;
 document.addEventListener('DOMContentLoaded', ()=>{
@@ -45,14 +59,15 @@ function renderList(){
   const reversed = [...logs].reverse();
   for (const log of reversed) {
     const item = document.createElement('div');
-    item.className = 'list-item';
+    const productive = isProductive(log);
+    item.className = 'list-item ' + (productive ? 'ring-productive' : 'ring-distraction');
     item.innerHTML = `
       <div style="font-size:20px; width:44px; height:44px; display:grid; place-items:center; border-radius:10px;">
-        ${emojiFor(log.actual)}
+        ${productive ? productivityEmojiFor(log.actual) : emojiFor(log.actual)}
       </div>
       <div style="flex:1">
-        <div style="font-weight:700">${escapeHtml(log.actual)}</div>
-        <div class="small-muted">instead of <strong>${escapeHtml(log.intended)}</strong> • ${log.minutes ? log.minutes+'m' : '—'}</div>
+        <div style="font-weight:700">${escapeHtml(log.actual)} <span class="badge ${productive?'badge-productive':'badge-distraction'}">${productive?'productive':'distraction'}</span></div>
+        <div class="small-muted">${productive ? 'matched' : 'instead of'} <strong>${escapeHtml(log.intended)}</strong> • ${log.minutes ? log.minutes+'m' : '—'}</div>
       </div>
       <div class="small-muted" style="text-align:right">${new Date(log.t).toLocaleString()}</div>
     `;
@@ -73,17 +88,23 @@ function updateStats(){
   const wastedMinutes = logs.reduce((s,l)=> s + (isProductive(l) ? 0 : (Number(l.minutes)||0)), 0);
   const productiveMinutes = logs.reduce((s,l)=> s + (isProductive(l) ? (Number(l.minutes)||0) : 0), 0);
   const wastedCount = logs.filter(l=> !isProductive(l)).length;
+  const productiveCount = total - wastedCount;
   totalCountEl.textContent = total;
   totalMinutesEl.textContent = wastedMinutes;
   if (productiveMinutesEl) productiveMinutesEl.textContent = productiveMinutes;
-  // heat reflects wasted frequency (playful formula)
-  const heat = Math.min(100, Math.round((wastedCount / Math.max(1,7)) * 16));
+  const totalDistractionsEl = document.getElementById('totalDistractions');
+  const totalProductiveEl = document.getElementById('totalProductive');
+  if (totalDistractionsEl) totalDistractionsEl.textContent = wastedCount;
+  if (totalProductiveEl) totalProductiveEl.textContent = productiveCount;
+  // heat reflects wasted percentage
+  const denominator = Math.max(1, total);
+  const heat = Math.round((wastedCount / denominator) * 100);
   heatBar.style.width = heat + '%';
   heatPercent.textContent = heat + '%';
 }
 
 /* Chart */
-let chart=null;
+let chart=null, prodChart=null;
 function updateChart(){
   const counts = {};
   for (const l of logs) {
@@ -99,7 +120,25 @@ function updateChart(){
   if (chart) chart.destroy();
   chart = new Chart(ctx, {
     type: 'bar',
-    data: { labels, datasets: [{ label:'Times', data, backgroundColor: labels.map(()=> 'rgba(108,92,231,0.9)') }]},
+    data: { labels, datasets: [{ label:'Distractions', data, backgroundColor: labels.map(()=> 'rgba(255,107,107,0.9)') }]},
+    options: { responsive:true, plugins:{ legend:{ display:false } }, scales:{ y:{ beginAtZero:true }}}
+  });
+
+  // Productive chart
+  const pcounts = {};
+  for (const l of logs) {
+    if (!isProductive(l)) continue;
+    const key = (l.actual || 'Unknown').toLowerCase();
+    pcounts[key] = (pcounts[key]||0) + 1;
+  }
+  const psorted = Object.entries(pcounts).sort((a,b)=>b[1]-a[1]).slice(0,8);
+  const plabels = psorted.map(s=> s[0].slice(0,24));
+  const pdata = psorted.map(s=> s[1]);
+  const pctx = document.getElementById('topProdChart').getContext('2d');
+  if (prodChart) prodChart.destroy();
+  prodChart = new Chart(pctx, {
+    type: 'bar',
+    data: { labels: plabels, datasets: [{ label:'Productive', data: pdata, backgroundColor: plabels.map(()=> 'rgba(0,210,255,0.9)') }]},
     options: { responsive:true, plugins:{ legend:{ display:false } }, scales:{ y:{ beginAtZero:true }}}
   });
 }
@@ -112,18 +151,20 @@ function generateSuggestion(log){
   if (!log) return { text: 'Log something to get tailored tips!', reward: 'A 10-minute guilt-free break' };
   const act = (log.actual||'').toLowerCase();
   if (isProductive(log)){
-    return { text: 'Nice! Keep the momentum — queue the next tiny step now.', reward: 'High-five yourself or take a 2-min walk' };
+    const ups = [
+      { text: 'Nice! Keep the momentum — queue the next tiny step now.', reward: 'High-five yourself or take a 2-min walk' },
+      { text: 'Great focus! Set a 25-min timer for the next chunk.', reward: 'Your favorite song' },
+      { text: 'You’re on track — jot down one concrete next action.', reward: 'A sip of coffee/tea' },
+    ];
+    return ups[Math.floor(Math.random()*ups.length)];
   }
-  if (act.includes('tiktok')||act.includes('instagram')||act.includes('scroll')){
-    return { text: 'Try a 25/5 Pomodoro: 25 mins focus, 5 mins break. Use a site-blocker for 25 min.', reward: 'Snack + stretch' };
-  }
-  if (act.includes('sleep')||act.includes('nap')){
-    return { text: 'Maybe you need a short power nap before focusing. Schedule a 20 min rest then do a 50 min session.', reward: 'A hot drink' };
-  }
-  if (act.includes('youtube')||act.includes('netflix')){
-    return { text: 'Set a timer: watch only 30 minutes after you finish one small task.', reward: 'One favorite episode' };
-  }
-  return { text: 'Break the task into a tiny 5-minute step and start with that — momentum beats motivation.', reward: 'Small treat' };
+  const downs = [
+    { match: /(tiktok|instagram|scroll|feed)/, text: 'Try a 25/5 Pomodoro: 25 on, 5 off; block socials during focus.', reward: 'Snack + stretch' },
+    { match: /(youtube|netflix|movie|tv|series)/, text: 'Finish one tiny task first, then watch one short clip.', reward: 'One short video' },
+    { match: /(sleep|nap|doze)/, text: 'Maybe rest first: power nap 20, then a 50-min focus block.', reward: 'Warm drink' },
+    { match: /.*/, text: 'Break it down to a 5-minute starter step and begin now.', reward: 'Small treat' },
+  ];
+  for (const rule of downs){ if (rule.match.test(act)) return { text: rule.text, reward: rule.reward }; }
 }
 
 /* Events */
@@ -135,6 +176,7 @@ if (logForm) logForm.addEventListener('submit', (e)=>{
   const actual = document.getElementById('actual').value.trim();
   const minutes = document.getElementById('minutes').value.trim();
   if (!intended || !actual) return;
+  // if same, it's productive; still log, but classification will reflect it
   const log = { intended, actual, minutes: minutes? Number(minutes):0, t: Date.now() };
   logs.push(log);
   save();
