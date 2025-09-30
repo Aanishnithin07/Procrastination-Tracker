@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>ProcrastiTrack — playful procrastination tracker</title>
+
+  <!-- Add to home screen meta -->
+  <meta name="theme-color" content="#6C5CE7"/>
+  <meta name="description" content="ProcrastiTrack — log distractions, see insights, and fix your focus (local-only).">
+
+  <!-- Google Font -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+
+  <!-- Tailwind CDN for rapid styling -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Chart.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="min-h-screen text-sky-50">
+  <div class="max-w-6xl mx-auto p-6">
+    <header class="flex items-start justify-between mb-6">
+      <div>
+        <h1 class="text-3xl font-extrabold">ProcrastiTrack</h1>
+        <p class="text-sm text-sky-200/70 mt-1">Log distractions, track minutes, and get playful suggestions — locally stored.</p>
+      </div>
+      <div class="text-right">
+        <div class="inline-block px-3 py-1 rounded-full bg-white/5 text-xs">Deploy-ready</div>
+      </div>
+    </header>
+
+    <main class="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <!-- Form -->
+      <section class="glass p-5 rounded-2xl">
+        <h2 class="text-lg font-semibold mb-3">Quick Log</h2>
+        <form id="logForm" class="space-y-3">
+          <div>
+            <label for="intended" class="text-xs block mb-1">What should you be doing?</label>
+            <input id="intended" required class="input" placeholder="e.g. Finish section of report">
+          </div>
+
+          <div>
+            <label for="actual" class="text-xs block mb-1">What did you actually do?</label>
+            <input id="actual" required class="input" placeholder="e.g. Scrolling TikTok">
+          </div>
+
+          <div>
+            <label for="minutes" class="text-xs block mb-1">Minutes spent (optional)</label>
+            <input id="minutes" type="number" min="0" class="input" placeholder="e.g. 25">
+          </div>
+
+          <div class="flex gap-2">
+            <button type="submit" class="btn-primary">Log distraction</button>
+            <button id="suggestBtn" type="button" class="btn-ghost">Quick suggestion</button>
+          </div>
+
+          <div class="text-xs text-sky-200/60 mt-2">Data is stored locally in your browser. Export / Clear anytime.</div>
+        </form>
+
+        <div class="mt-5 border-t border-white/6 pt-4">
+          <div class="flex justify-between">
+            <div>
+              <div class="text-xs text-sky-200/70">Total logs</div>
+              <div id="totalCount" class="text-2xl font-bold">0</div>
+            </div>
+            <div>
+              <div class="text-xs text-sky-200/70">Minutes wasted</div>
+              <div id="totalMinutes" class="text-2xl font-bold">0</div>
+            </div>
+          </div>
+
+          <div class="mt-4">
+            <div class="text-xs text-sky-200/70">Procrastination Heat</div>
+            <div class="w-full bg-white/6 rounded-xl h-3 mt-2 overflow-hidden">
+              <div id="heatBar" class="h-full rounded-xl" style="width:0%;"></div>
+            </div>
+            <div id="heatPercent" class="text-xs text-sky-200/60 mt-2">0%</div>
+          </div>
+
+          <div class="mt-4 flex gap-2">
+            <button id="exportBtn" class="btn-ghost">Export JSON</button>
+            <button id="importBtn" class="btn-ghost">Import JSON</button>
+            <button id="clearBtn" class="btn-danger">Clear all</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Recent logs -->
+      <section class="glass p-5 rounded-2xl">
+        <h2 class="text-lg font-semibold mb-3">Recent Logs</h2>
+        <div id="list" class="space-y-3 max-h-[60vh] overflow-y-auto pr-2"></div>
+      </section>
+
+      <!-- Insights -->
+      <section class="glass p-5 rounded-2xl">
+        <div class="flex items-center justify-between">
+          <h2 class="text-lg font-semibold">Insights</h2>
+          <div class="text-xs text-sky-200/60">Top distractions</div>
+        </div>
+
+        <canvas id="topChart" class="mt-4"></canvas>
+
+        <div class="mt-6">
+          <h3 class="font-semibold">Smart suggestion</h3>
+          <div id="suggestions" class="text-sm text-sky-200/70 mt-2">Log something to get tailored tips and a fun reward idea.</div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="mt-6 text-xs text-center text-sky-200/50">
+      Made with ❤️ • ProcrastiTrack — local and playful
+    </footer>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
+
