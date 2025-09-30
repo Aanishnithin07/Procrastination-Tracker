@@ -128,7 +128,8 @@ function generateSuggestion(log){
 
 /* Events */
 document.addEventListener('DOMContentLoaded', ()=>{
-document.getElementById('logForm').addEventListener('submit', (e)=>{
+const logForm = document.getElementById('logForm');
+if (logForm) logForm.addEventListener('submit', (e)=>{
   e.preventDefault();
   const intended = document.getElementById('intended').value.trim();
   const actual = document.getElementById('actual').value.trim();
@@ -147,10 +148,25 @@ document.getElementById('logForm').addEventListener('submit', (e)=>{
   document.getElementById('actual').focus();
 });
 
-document.getElementById('suggestBtn').addEventListener('click', ()=>{
+const suggestBtn = document.getElementById('suggestBtn');
+if (suggestBtn) suggestBtn.addEventListener('click', ()=>{
   const sample = { intended:'Finish task', actual:'Scrolling social', minutes:10, t: Date.now() };
   const s = generateSuggestion(sample);
   suggestionsEl.textContent = s.text + ' • Reward: ' + s.reward;
+});
+
+const logProdBtn = document.getElementById('logProdBtn');
+if (logProdBtn) logProdBtn.addEventListener('click', ()=>{
+  const intended = document.getElementById('intended').value.trim();
+  if (!intended) { alert('Enter what you should be doing first.'); return; }
+  const minutesVal = document.getElementById('minutes').value.trim();
+  const minutes = minutesVal ? Number(minutesVal) : 0;
+  const log = { intended, actual: intended, minutes, t: Date.now() };
+  logs.push(log);
+  save();
+  renderList(); updateStats(); updateChart();
+  const sug = generateSuggestion(log);
+  suggestionsEl.textContent = sug.text + ' • Reward: ' + sug.reward;
 });
 
 document.getElementById('exportBtn').addEventListener('click', ()=>{
