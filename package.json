@@ -5,6 +5,8 @@
   "description": "Playful procrastination tracker — static, deploy-ready.",
   "scripts": {
     "preview": "npx http-server -c-1 ."
+  },
+  "dependencies": {
+    "requirements": "^2.0.2"
   }
 }
-
