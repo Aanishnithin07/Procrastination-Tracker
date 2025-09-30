@@ -29,11 +29,12 @@ function emojiFor(text='') {
 }
 
 /* Rendering */
-let listEl, totalCountEl, totalMinutesEl, heatBar, heatPercent, suggestionsEl;
+let listEl, totalCountEl, totalMinutesEl, productiveMinutesEl, heatBar, heatPercent, suggestionsEl;
 document.addEventListener('DOMContentLoaded', ()=>{
   listEl = document.getElementById('list');
   totalCountEl = document.getElementById('totalCount');
   totalMinutesEl = document.getElementById('totalMinutes');
+  productiveMinutesEl = document.getElementById('productiveMinutes');
   heatBar = document.getElementById('heatBar');
   heatPercent = document.getElementById('heatPercent');
   suggestionsEl = document.getElementById('suggestions');
@@ -59,13 +60,24 @@ function renderList(){
   }
 }
 
+function isProductive(log){
+  const a = (log.actual||'').trim().toLowerCase();
+  const i = (log.intended||'').trim().toLowerCase();
+  if (!a || !i) return false;
+  // treat close matches as productive
+  return a === i || a.includes(i) || i.includes(a);
+}
+
 function updateStats(){
   const total = logs.length;
-  const minutes = logs.reduce((s,l)=> s + (Number(l.minutes)||0), 0);
+  const wastedMinutes = logs.reduce((s,l)=> s + (isProductive(l) ? 0 : (Number(l.minutes)||0)), 0);
+  const productiveMinutes = logs.reduce((s,l)=> s + (isProductive(l) ? (Number(l.minutes)||0) : 0), 0);
+  const wastedCount = logs.filter(l=> !isProductive(l)).length;
   totalCountEl.textContent = total;
-  totalMinutesEl.textContent = minutes;
-  // heat: ratio of logs this week vs arbitrary threshold
-  const heat = Math.min(100, Math.round((total / Math.max(1,7)) * 14)); // playful formula
+  totalMinutesEl.textContent = wastedMinutes;
+  if (productiveMinutesEl) productiveMinutesEl.textContent = productiveMinutes;
+  // heat reflects wasted frequency (playful formula)
+  const heat = Math.min(100, Math.round((wastedCount / Math.max(1,7)) * 16));
   heatBar.style.width = heat + '%';
   heatPercent.textContent = heat + '%';
 }
@@ -75,6 +87,7 @@ let chart=null;
 function updateChart(){
   const counts = {};
   for (const l of logs) {
+    if (isProductive(l)) continue; // only chart distractions
     const key = (l.actual || 'Unknown').toLowerCase();
     counts[key] = (counts[key]||0) + 1;
   }
@@ -98,6 +111,9 @@ function escapeHtml(s=''){ return (s+'').replace(/[&<>"']/g, c=> ({'&':'&amp;','
 function generateSuggestion(log){
   if (!log) return { text: 'Log something to get tailored tips!', reward: 'A 10-minute guilt-free break' };
   const act = (log.actual||'').toLowerCase();
+  if (isProductive(log)){
+    return { text: 'Nice! Keep the momentum — queue the next tiny step now.', reward: 'High-five yourself or take a 2-min walk' };
+  }
   if (act.includes('tiktok')||act.includes('instagram')||act.includes('scroll')){
     return { text: 'Try a 25/5 Pomodoro: 25 mins focus, 5 mins break. Use a site-blocker for 25 min.', reward: 'Snack + stretch' };
   }
