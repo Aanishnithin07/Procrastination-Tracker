@@ -7,6 +7,15 @@ function load() {
 }
 function save(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(logs)); }
 
+// Toast notification
+function showToast(message, type = 'success') {
+  const toast = document.createElement('div');
+  toast.className = 'success-toast';
+  toast.textContent = message;
+  document.body.appendChild(toast);
+  setTimeout(() => toast.remove(), 3000);
+}
+
 function emojiFor(text='') {
   text = text.toLowerCase();
   const mapping = [
@@ -120,8 +129,43 @@ function updateChart(){
   if (chart) chart.destroy();
   chart = new Chart(ctx, {
     type: 'bar',
-    data: { labels, datasets: [{ label:'Distractions', data, backgroundColor: labels.map(()=> 'rgba(255,107,107,0.9)') }]},
-    options: { responsive:true, plugins:{ legend:{ display:false } }, scales:{ y:{ beginAtZero:true }}}
+    data: { 
+      labels, 
+      datasets: [{ 
+        label:'Distractions', 
+        data, 
+        backgroundColor: 'rgba(239,68,68,0.8)',
+        borderColor: 'rgba(239,68,68,1)',
+        borderWidth: 2,
+        borderRadius: 8,
+        barThickness: 30
+      }]
+    },
+    options: { 
+      responsive: true,
+      maintainAspectRatio: true,
+      plugins:{ 
+        legend:{ display: false },
+        tooltip: {
+          backgroundColor: 'rgba(0,0,0,0.8)',
+          padding: 12,
+          cornerRadius: 8,
+          titleFont: { size: 14, weight: 'bold' },
+          bodyFont: { size: 13 }
+        }
+      }, 
+      scales:{ 
+        y: { 
+          beginAtZero: true,
+          ticks: { color: 'rgba(230,238,248,0.6)', font: { size: 11 } },
+          grid: { color: 'rgba(255,255,255,0.05)' }
+        },
+        x: {
+          ticks: { color: 'rgba(230,238,248,0.6)', font: { size: 11 } },
+          grid: { display: false }
+        }
+      }
+    }
   });
 
   // Productive chart
@@ -138,8 +182,43 @@ function updateChart(){
   if (prodChart) prodChart.destroy();
   prodChart = new Chart(pctx, {
     type: 'bar',
-    data: { labels: plabels, datasets: [{ label:'Productive', data: pdata, backgroundColor: plabels.map(()=> 'rgba(0,210,255,0.9)') }]},
-    options: { responsive:true, plugins:{ legend:{ display:false } }, scales:{ y:{ beginAtZero:true }}}
+    data: { 
+      labels: plabels, 
+      datasets: [{ 
+        label:'Productive', 
+        data: pdata, 
+        backgroundColor: 'rgba(0,210,255,0.8)',
+        borderColor: 'rgba(0,210,255,1)',
+        borderWidth: 2,
+        borderRadius: 8,
+        barThickness: 30
+      }]
+    },
+    options: { 
+      responsive: true,
+      maintainAspectRatio: true,
+      plugins:{ 
+        legend:{ display: false },
+        tooltip: {
+          backgroundColor: 'rgba(0,0,0,0.8)',
+          padding: 12,
+          cornerRadius: 8,
+          titleFont: { size: 14, weight: 'bold' },
+          bodyFont: { size: 13 }
+        }
+      }, 
+      scales:{ 
+        y: { 
+          beginAtZero: true,
+          ticks: { color: 'rgba(230,238,248,0.6)', font: { size: 11 } },
+          grid: { color: 'rgba(255,255,255,0.05)' }
+        },
+        x: {
+          ticks: { color: 'rgba(230,238,248,0.6)', font: { size: 11 } },
+          grid: { display: false }
+        }
+      }
+    }
   });
 }
 
@@ -184,6 +263,9 @@ if (logForm) logForm.addEventListener('submit', (e)=>{
   // update suggestion
   const sug = generateSuggestion(log);
   suggestionsEl.textContent = sug.text + ' • Reward: ' + sug.reward;
+  // Show toast notification
+  const isProductiveLog = isProductive(log);
+  showToast(isProductiveLog ? '🎉 Productive time logged!' : '📝 Distraction logged');
   // subtle reset & focus
   document.getElementById('actual').value = '';
   document.getElementById('minutes').value = '';
@@ -209,6 +291,7 @@ if (logProdBtn) logProdBtn.addEventListener('click', ()=>{
   renderList(); updateStats(); updateChart();
   const sug = generateSuggestion(log);
   suggestionsEl.textContent = sug.text + ' • Reward: ' + sug.reward;
+  showToast('🎯 Great job! Productivity logged!');
 });
 
 document.getElementById('exportBtn').addEventListener('click', ()=>{
@@ -217,12 +300,14 @@ document.getElementById('exportBtn').addEventListener('click', ()=>{
   const a = document.createElement('a');
   a.href = url; a.download = 'procrasti-logs.json'; a.click();
   URL.revokeObjectURL(url);
+  showToast('📥 Data exported successfully!');
 });
 
 document.getElementById('clearBtn').addEventListener('click', ()=>{
   if (!confirm('Clear all logs? This cannot be undone.')) return;
   logs = []; save(); renderList(); updateStats(); updateChart();
   suggestionsEl.textContent = 'Cleared — start fresh!';
+  showToast('🗑️ All logs cleared!');
 });
 
 document.getElementById('importBtn').addEventListener('click', ()=>{
@@ -238,7 +323,7 @@ document.getElementById('importBtn').addEventListener('click', ()=>{
         const arr = JSON.parse(reader.result);
         if (!Array.isArray(arr)) throw new Error('Not an array');
         logs = arr; save(); renderList(); updateStats(); updateChart();
-        alert('Imported ' + logs.length + ' logs.');
+        showToast(`📤 Imported ${logs.length} logs successfully!`);
       } catch(err){ alert('Invalid JSON file'); }
     };
     reader.readAsText(f);

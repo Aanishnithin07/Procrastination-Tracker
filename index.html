@@ -60,26 +60,26 @@
         </form>
 
         <div class="mt-5 border-t border-white/6 pt-4">
-          <div class="grid grid-cols-2 gap-4 md:grid-cols-5">
-            <div>
+          <div class="grid grid-cols-2 gap-3 md:grid-cols-5">
+            <div class="stat-card">
               <div class="text-xs text-sky-200/70">Total logs</div>
               <div id="totalCount" class="text-2xl font-bold">0</div>
             </div>
-            <div>
+            <div class="stat-card">
               <div class="text-xs text-sky-200/70">Distractions</div>
-              <div id="totalDistractions" class="text-2xl font-bold">0</div>
+              <div id="totalDistractions" class="text-2xl font-bold text-red-400">0</div>
             </div>
-            <div>
+            <div class="stat-card">
               <div class="text-xs text-sky-200/70">Productive logs</div>
-              <div id="totalProductive" class="text-2xl font-bold">0</div>
+              <div id="totalProductive" class="text-2xl font-bold text-cyan-400">0</div>
             </div>
-            <div>
+            <div class="stat-card">
               <div class="text-xs text-sky-200/70">Minutes wasted</div>
-              <div id="totalMinutes" class="text-2xl font-bold">0</div>
+              <div id="totalMinutes" class="text-2xl font-bold text-red-400">0</div>
             </div>
-            <div>
+            <div class="stat-card">
               <div class="text-xs text-sky-200/70">Minutes productive</div>
-              <div id="productiveMinutes" class="text-2xl font-bold">0</div>
+              <div id="productiveMinutes" class="text-2xl font-bold text-cyan-400">0</div>
             </div>
           </div>
 
@@ -113,12 +113,12 @@
         </div>
 
         <div class="grid grid-cols-1 gap-6 mt-4">
-          <div>
-            <div class="text-xs text-sky-200/60">Top distractions</div>
+          <div class="chart-container">
+            <div class="text-xs text-sky-200/60 mb-3">Top distractions</div>
             <canvas id="topChart" class="mt-2"></canvas>
           </div>
-          <div>
-            <div class="text-xs text-sky-200/60">Top productive tasks</div>
+          <div class="chart-container">
+            <div class="text-xs text-sky-200/60 mb-3">Top productive tasks</div>
             <canvas id="topProdChart" class="mt-2"></canvas>
           </div>
         </div>
