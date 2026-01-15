@@ -1,7 +1,9 @@
+import logging
 import os
-from datetime import datetime, timedelta
+from datetime import datetime
+from pathlib import Path
 from cs50 import SQL
-from flask import Flask, flash, redirect, render_template, request, session, jsonify
+from flask import Flask, flash, redirect, render_template, request, session
 from flask_session import Session
 from werkzeug.security import check_password_hash, generate_password_hash
 
@@ -10,13 +12,53 @@ from helpers import apology, login_required, format_time, get_mood_emoji, get_en
 # Configure application
 app = Flask(__name__)
 
+# Core security/config
+app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY") or os.urandom(32)
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+
 # Configure session to use filesystem (instead of signed cookies)
 app.config["SESSION_PERMANENT"] = False
 app.config["SESSION_TYPE"] = "filesystem"
+
+# Keep server-side session files out of the repo and away from project root
+session_dir = Path(app.instance_path) / "flask_session"
+session_dir.mkdir(parents=True, exist_ok=True)
+app.config["SESSION_FILE_DIR"] = str(session_dir)
 Session(app)
 
 # Configure CS50 Library to use SQLite database
 db = SQL("sqlite:///procrastination.db")
+
+# Logging (minimal but useful)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger("procrastination")
+
+
+def generate_csrf_token():
+    token = session.get("_csrf_token")
+    if not token:
+        token = os.urandom(16).hex()
+        session["_csrf_token"] = token
+    return token
+
+
+@app.before_request
+def csrf_protect():
+    if request.method == "POST":
+        sent = request.form.get("csrf_token")
+        expected = session.get("_csrf_token")
+        if not sent or not expected or sent != expected:
+            return apology("invalid or missing CSRF token", 400)
+
+
+app.jinja_env.globals["csrf_token"] = generate_csrf_token
+app.jinja_env.filters["format_time"] = format_time
+app.jinja_env.filters["get_mood_emoji"] = get_mood_emoji
+app.jinja_env.filters["get_energy_color"] = get_energy_color
 
 # Create tables if they don't exist
 with app.app_context():
@@ -87,6 +129,16 @@ def after_request(response):
     response.headers["Expires"] = 0
     response.headers["Pragma"] = "no-cache"
     return response
+
+
+@app.errorhandler(404)
+def not_found(_e):
+    return apology("page not found", 404)
+
+
+@app.errorhandler(500)
+def server_error(_e):
+    return apology("internal error", 500)
 
 
 @app.route("/")
@@ -166,12 +218,28 @@ def add_task():
     if request.method == "POST":
         title = request.form.get("title")
         description = request.form.get("description")
-        estimated_time = request.form.get("estimated_time")
-        importance = request.form.get("importance")
+        estimated_time_raw = request.form.get("estimated_time")
+        importance_raw = request.form.get("importance")
         deadline = request.form.get("deadline")
 
         if not title:
             return apology("must provide task title")
+
+        estimated_time = None
+        if estimated_time_raw:
+            try:
+                estimated_time = int(estimated_time_raw)
+                if estimated_time <= 0:
+                    return apology("estimated time must be positive", 400)
+            except ValueError:
+                return apology("estimated time must be a number", 400)
+
+        try:
+            importance = int(importance_raw) if importance_raw else None
+        except ValueError:
+            return apology("importance must be a number", 400)
+        if importance not in [1, 2, 3, 4, 5]:
+            return apology("importance must be between 1 and 5", 400)
 
         # Convert deadline to proper format if provided
         deadline_formatted = None
@@ -181,10 +249,14 @@ def add_task():
             except ValueError:
                 return apology("invalid deadline format")
 
-        db.execute("""
-            INSERT INTO tasks (user_id, title, description, estimated_time, importance, deadline)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, session["user_id"], title, description, estimated_time, importance, deadline_formatted)
+        try:
+            db.execute("""
+                INSERT INTO tasks (user_id, title, description, estimated_time, importance, deadline)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, session["user_id"], title, description, estimated_time, importance, deadline_formatted)
+        except Exception:
+            logger.exception("Failed to insert task")
+            return apology("could not add task", 500)
 
         flash("✅ Task added successfully!")
         return redirect("/")
@@ -199,20 +271,31 @@ def log_procrastination():
     if request.method == "POST":
         task_id = request.form.get("task_id")
         mood = request.form.get("mood")
-        energy_level = request.form.get("energy_level")
+        energy_level_raw = request.form.get("energy_level")
         environment = request.form.get("environment")
         what_did_instead = request.form.get("what_did_instead")
         trigger_reason = request.form.get("trigger_reason")
 
-        if not mood or not energy_level:
+        if not mood or not energy_level_raw:
             return apology("must provide mood and energy level")
 
-        db.execute("""
-            INSERT INTO procrastination_logs 
-            (task_id, user_id, mood, energy_level, environment, what_did_instead, trigger_reason)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, task_id if task_id else None, session["user_id"], mood, energy_level, 
-            environment, what_did_instead, trigger_reason)
+        try:
+            energy_level = int(energy_level_raw)
+        except ValueError:
+            return apology("energy level must be a number", 400)
+        if energy_level < 1 or energy_level > 10:
+            return apology("energy level must be between 1 and 10", 400)
+
+        try:
+            db.execute("""
+                INSERT INTO procrastination_logs 
+                (task_id, user_id, mood, energy_level, environment, what_did_instead, trigger_reason)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, task_id if task_id else None, session["user_id"], mood, energy_level,
+                environment, what_did_instead, trigger_reason)
+        except Exception:
+            logger.exception("Failed to insert procrastination log")
+            return apology("could not log procrastination", 500)
 
         flash("📊 Procrastination logged! Building your pattern...")
         return redirect("/")
@@ -298,13 +381,17 @@ def analytics():
                          insights=insights)
 
 
-@app.route("/complete_task/<int:task_id>")
+@app.route("/complete_task/<int:task_id>", methods=["GET", "POST"])
 @login_required
 def complete_task(task_id):
     """Mark a task as completed"""
-    db.execute("UPDATE tasks SET status = 'completed' WHERE id = ? AND user_id = ?", 
-               task_id, session["user_id"])
-    flash("🎉 Task completed! Great job!")
+    try:
+        db.execute("UPDATE tasks SET status = 'completed' WHERE id = ? AND user_id = ?", 
+                   task_id, session["user_id"])
+    except Exception:
+        logger.exception("Failed to complete task")
+        return apology("could not update task", 500)
+    flash("Task completed! Great job!")
     return redirect("/")
 
 
@@ -328,6 +415,9 @@ def login():
             return apology("invalid username and/or password", 403)
 
         session["user_id"] = rows[0]["id"]
+        next_url = request.args.get("next")
+        if next_url and isinstance(next_url, str) and next_url.startswith("/"):
+            return redirect(next_url)
         return redirect("/")
     
     return render_template("login.html")
@@ -372,4 +462,5 @@ def register():
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    debug = os.environ.get("FLASK_DEBUG") == "1"
+    app.run(debug=debug)

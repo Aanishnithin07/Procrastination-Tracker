@@ -1,0 +1,76 @@
+{% extends "layout.html" %}
+
+{% block title %}Analytics · ProcrastiNation{% endblock %}
+
+{% block content %}
+	<div class="row">
+		<div class="col-lg-10 col-xl-9 mx-auto">
+			<div class="d-flex align-items-center justify-content-between mb-3">
+				<div>
+					<h1 class="text-white mb-0" style="font-weight: 800;">Analytics</h1>
+					<div class="text-white-50">Last 30 days · patterns you can act on.</div>
+				</div>
+				<a class="btn btn-outline-light" href="/">Back</a>
+			</div>
+
+			{% if insights %}
+				<div class="card mb-4">
+					<div class="card-header">Insights</div>
+					<div class="card-body">
+						<ul class="mb-0">
+							{% for i in insights %}
+								<li>{{ i }}</li>
+							{% endfor %}
+						</ul>
+					</div>
+				</div>
+			{% endif %}
+
+			<div class="row g-3">
+				<div class="col-lg-6">
+					<div class="card">
+						<div class="card-header">By hour of day</div>
+						<div class="card-body">
+							<canvas id="chartHourly" height="140"></canvas>
+						</div>
+					</div>
+				</div>
+				<div class="col-lg-6">
+					<div class="card">
+						<div class="card-header">Mood distribution</div>
+						<div class="card-body">
+							<canvas id="chartMood" height="140"></canvas>
+						</div>
+					</div>
+				</div>
+				<div class="col-lg-6">
+					<div class="card">
+						<div class="card-header">Energy level</div>
+						<div class="card-body">
+							<canvas id="chartEnergy" height="140"></canvas>
+						</div>
+					</div>
+				</div>
+				<div class="col-lg-6">
+					<div class="card">
+						<div class="card-header">Environment</div>
+						<div class="card-body">
+							<canvas id="chartEnv" height="140"></canvas>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+	</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+	window.PROCRASTINATION_ANALYTICS = {
+		hourly_data: {{ hourly_data|tojson }},
+		mood_data: {{ mood_data|tojson }},
+		energy_data: {{ energy_data|tojson }},
+		env_data: {{ env_data|tojson }}
+	};
+</script>
+{% endblock %}

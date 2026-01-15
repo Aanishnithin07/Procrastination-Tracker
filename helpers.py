@@ -1,4 +1,4 @@
-from flask import redirect, render_template, session
+from flask import flash, redirect, render_template, request, session
 from functools import wraps
 
 
@@ -18,7 +18,8 @@ def login_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
         if session.get("user_id") is None:
-            return redirect("/login")
+            flash("Please log in to continue.")
+            return redirect(f"/login?next={request.path}")
         return f(*args, **kwargs)
     return decorated_function
 
