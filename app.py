@@ -381,7 +381,13 @@ def analytics():
                          insights=insights)
 
 
-@app.route("/complete_task/<int:task_id>", methods=["GET", "POST"])
+@app.route("/healthz")
+def healthz():
+    """Simple health check."""
+    return {"status": "ok"}, 200
+
+
+@app.route("/complete_task/<int:task_id>", methods=["POST"])
 @login_required
 def complete_task(task_id):
     """Mark a task as completed"""
@@ -392,6 +398,48 @@ def complete_task(task_id):
         logger.exception("Failed to complete task")
         return apology("could not update task", 500)
     flash("Task completed! Great job!")
+    return redirect("/")
+
+
+@app.route("/start_task/<int:task_id>", methods=["POST"])
+@login_required
+def start_task(task_id):
+    """Mark a task as in progress."""
+    try:
+        db.execute("UPDATE tasks SET status = 'in_progress' WHERE id = ? AND user_id = ?",
+                   task_id, session["user_id"])
+    except Exception:
+        logger.exception("Failed to start task")
+        return apology("could not update task", 500)
+    flash("Task started. Focus mode on.")
+    return redirect("/")
+
+
+@app.route("/abandon_task/<int:task_id>", methods=["POST"])
+@login_required
+def abandon_task(task_id):
+    """Mark a task as abandoned."""
+    try:
+        db.execute("UPDATE tasks SET status = 'abandoned' WHERE id = ? AND user_id = ?",
+                   task_id, session["user_id"])
+    except Exception:
+        logger.exception("Failed to abandon task")
+        return apology("could not update task", 500)
+    flash("Task abandoned. No guilt — adjust and move on.")
+    return redirect("/")
+
+
+@app.route("/delete_task/<int:task_id>", methods=["POST"])
+@login_required
+def delete_task(task_id):
+    """Delete a task."""
+    try:
+        db.execute("DELETE FROM tasks WHERE id = ? AND user_id = ?",
+                   task_id, session["user_id"])
+    except Exception:
+        logger.exception("Failed to delete task")
+        return apology("could not delete task", 500)
+    flash("Task deleted.")
     return redirect("/")
 
 

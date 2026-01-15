@@ -59,9 +59,23 @@
 										</div>
 									</div>
 									<div class="task-actions text-end">
+										{% if task.status == 'pending' %}
+											<form method="post" action="/start_task/{{ task.id }}" class="d-inline">
+												<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+												<button class="btn btn-outline-primary" type="submit">Start</button>
+											</form>
+										{% endif %}
 										<form method="post" action="/complete_task/{{ task.id }}" class="d-inline">
 											<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 											<button class="btn btn-success" type="submit">Complete</button>
+										</form>
+										<form method="post" action="/abandon_task/{{ task.id }}" class="d-inline">
+											<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+											<button class="btn btn-warning" type="submit" data-confirm="Mark this task as abandoned?">Abandon</button>
+										</form>
+										<form method="post" action="/delete_task/{{ task.id }}" class="d-inline">
+											<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+											<button class="btn btn-danger" type="submit" data-confirm="Delete this task permanently?">Delete</button>
 										</form>
 									</div>
 								</div>

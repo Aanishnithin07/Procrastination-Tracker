@@ -4,6 +4,17 @@ function safeParseInt(value, fallback) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+	// Generic confirm for destructive actions
+	document.body.addEventListener('click', (e) => {
+		const btn = e.target.closest('button[data-confirm]');
+		if (!btn) return;
+		const msg = btn.getAttribute('data-confirm') || 'Are you sure?';
+		if (!window.confirm(msg)) {
+			e.preventDefault();
+			e.stopPropagation();
+		}
+	});
+
 	// Mood selection
 	const moodGrid = document.getElementById('moodGrid');
 	const moodInput = document.getElementById('moodInput');
