@@ -137,11 +137,118 @@ document.addEventListener('DOMContentLoaded', () => {
 	const energySlider = document.getElementById('energySlider');
 	const energyValue = document.getElementById('energyValue');
 	if (energySlider && energyValue) {
+		const energyFill = document.getElementById('energyFill');
 		const update = () => {
-			energyValue.textContent = String(safeParseInt(energySlider.value, 5));
+			const value = Math.max(1, Math.min(10, safeParseInt(energySlider.value, 5)));
+			energyValue.textContent = String(value);
+			if (energyFill) {
+				const pct = value * 10;
+				const hue = Math.round(((value - 1) / 9) * 120);
+				energyFill.style.width = `${pct}%`;
+				energyFill.style.background = `hsl(${hue} 82% 48%)`;
+			}
 		};
 		energySlider.addEventListener('input', update);
 		update();
+	}
+
+	// Logging wizard flow
+	const wizardForm = document.getElementById('logWizardForm');
+	if (wizardForm) {
+		const wizardTrack = document.getElementById('wizTrack');
+		const stepChips = [...document.querySelectorAll('[data-step-chip]')];
+		const nextButtons = [...wizardForm.querySelectorAll('[data-next-step]')];
+		const prevButtons = [...wizardForm.querySelectorAll('[data-prev-step]')];
+		const totalSteps = 3;
+		let step = 0;
+
+		const renderStep = () => {
+			if (wizardTrack) wizardTrack.style.transform = `translateX(-${step * 100}%)`;
+			stepChips.forEach((chip, idx) => chip.classList.toggle('is-active', idx === step));
+		};
+
+		nextButtons.forEach((btn) => {
+			btn.addEventListener('click', () => {
+				step = Math.min(totalSteps - 1, step + 1);
+				renderStep();
+			});
+		});
+
+		prevButtons.forEach((btn) => {
+			btn.addEventListener('click', () => {
+				step = Math.max(0, step - 1);
+				renderStep();
+			});
+		});
+
+		stepChips.forEach((chip, idx) => {
+			chip.addEventListener('click', () => {
+				step = idx;
+				renderStep();
+			});
+		});
+
+		const selectedTaskId = document.getElementById('selectedTaskId');
+		const taskInput = document.getElementById('intendedTaskInput');
+		const taskCards = [...wizardForm.querySelectorAll('[data-task-choice]')];
+		taskCards.forEach((card) => {
+			card.addEventListener('click', () => {
+				taskCards.forEach((c) => c.classList.remove('is-selected'));
+				card.classList.add('is-selected');
+				if (selectedTaskId) selectedTaskId.value = card.getAttribute('data-task-id') || '';
+				if (taskInput) taskInput.value = '';
+			});
+		});
+		if (taskInput && selectedTaskId) {
+			taskInput.addEventListener('input', () => {
+				if (taskInput.value.trim()) {
+					selectedTaskId.value = '';
+					taskCards.forEach((c) => c.classList.remove('is-selected'));
+				}
+			});
+		}
+
+		const moodInput = document.getElementById('moodInput');
+		const moodCards = [...wizardForm.querySelectorAll('[data-mood-choice]')];
+		moodCards.forEach((card) => {
+			card.addEventListener('click', () => {
+				moodCards.forEach((c) => c.classList.remove('is-selected'));
+				card.classList.add('is-selected');
+				if (moodInput) moodInput.value = card.getAttribute('data-mood') || 'distracted';
+			});
+		});
+
+		const triggerInput = document.getElementById('triggerInput');
+		const triggerPills = [...wizardForm.querySelectorAll('[data-trigger-choice]')];
+		triggerPills.forEach((pill) => {
+			pill.addEventListener('click', () => {
+				const already = pill.classList.contains('is-selected');
+				triggerPills.forEach((p) => p.classList.remove('is-selected'));
+				if (already) {
+					if (triggerInput) triggerInput.value = '';
+					return;
+				}
+				pill.classList.add('is-selected');
+				if (triggerInput) triggerInput.value = pill.getAttribute('data-trigger') || '';
+			});
+		});
+
+		const envInput = document.getElementById('environmentInput');
+		const envCards = [...wizardForm.querySelectorAll('[data-env-choice]')];
+		envCards.forEach((card) => {
+			card.addEventListener('click', () => {
+				const already = card.classList.contains('is-selected');
+				envCards.forEach((c) => c.classList.remove('is-selected'));
+				if (already) {
+					if (envInput) envInput.value = '';
+					return;
+				}
+				card.classList.add('is-selected');
+				if (envInput) envInput.value = card.getAttribute('data-env') || '';
+			});
+		});
+
+		renderStep();
 	}
 
 	// Analytics charts

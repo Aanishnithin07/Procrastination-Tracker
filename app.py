@@ -124,6 +124,31 @@ PRODUCTIVITY_QUOTES = [
     },
 ]
 
+WIZARD_MOOD_OPTIONS = [
+    {"key": "overwhelmed", "label": "Overwhelmed", "emoji": "😰"},
+    {"key": "anxious", "label": "Anxious", "emoji": "😟"},
+    {"key": "bored", "label": "Bored", "emoji": "😑"},
+    {"key": "tired", "label": "Tired", "emoji": "😴"},
+    {"key": "distracted", "label": "Distracted", "emoji": "🤔"},
+]
+
+WIZARD_TRIGGER_OPTIONS = [
+    "Too big",
+    "Unclear",
+    "Not motivated",
+    "Fear of failure",
+    "Too tired",
+    "Something else",
+]
+
+WIZARD_ENV_OPTIONS = [
+    {"key": "home", "label": "Home", "emoji": "🏠"},
+    {"key": "cafe", "label": "Cafe", "emoji": "☕"},
+    {"key": "office", "label": "Office", "emoji": "🏢"},
+    {"key": "phone", "label": "Phone", "emoji": "📱"},
+    {"key": "bed", "label": "Bed", "emoji": "🛏"},
+]
+
 
 def _get_user_initials(username: str) -> str:
     if not username:
@@ -243,6 +268,40 @@ def _next_board_order(user_id: int, status: str) -> int:
         status,
     )
     return int(row[0]["max_order"]) + 1
+
+
+def _fetch_active_tasks_for_log(user_id: int):
+    tasks = db.execute(
+        """
+        SELECT id, title, description, importance, deadline
+        FROM tasks
+        WHERE user_id = ? AND status IN ('pending', 'in_progress')
+        ORDER BY importance DESC, deadline ASC, id DESC
+        """,
+        user_id,
+    )
+    for task in tasks:
+        task["importance"] = int(task.get("importance") or 0)
+        task["deadline_countdown"], task["deadline_state"] = _deadline_countdown(task.get("deadline"))
+    return tasks
+
+
+def _build_log_insight(mood: str, energy_level: int) -> str:
+    if energy_level <= 3 and mood in {"tired", "overwhelmed"}:
+        return "Your pattern points to energy overload. Try a 10-minute reset, then restart with the smallest concrete action."
+    if mood == "overwhelmed":
+        return "This looks like scope friction. Break the task into one 15-minute chunk and only commit to that first chunk."
+    if mood == "anxious":
+        return "Anxiety usually spikes when success criteria are fuzzy. Define what 'done for today' means in one sentence before continuing."
+    if mood == "bored" and energy_level >= 6:
+        return "You had enough energy but low stimulation. Raise challenge slightly or add a timer sprint to make it engaging."
+    if mood == "tired":
+        return "Fatigue was likely the main blocker. Shift this task to your peak-energy window and keep it lighter right now."
+    if mood == "distracted":
+        return "This signals context switching. Reduce open tabs and protect one distraction-free block for your next attempt."
+    if energy_level >= 8:
+        return "Energy is available. Your best lever now is clarity: pick one deliverable and finish it before switching."
+    return "You captured a valuable signal. Repeating this log over time will help isolate your highest-impact trigger."
 
 
 @app.context_processor
@@ -377,10 +436,15 @@ with app.app_context():
             environment TEXT,
             what_did_instead TEXT,
             trigger_reason TEXT,
+            intended_task_text TEXT,
             FOREIGN KEY (task_id) REFERENCES tasks (id),
             FOREIGN KEY (user_id) REFERENCES users (id)
         )
     """)
+
+    log_columns = {col["name"] for col in db.execute("SELECT name FROM pragma_table_info('procrastination_logs')")}
+    if "intended_task_text" not in log_columns:
+        db.execute("ALTER TABLE procrastination_logs ADD COLUMN intended_task_text TEXT")
 
 
 @app.after_request
@@ -769,47 +833,97 @@ def quick_add_task():
 @app.route("/log_procrastination", methods=["GET", "POST"])
 @login_required
 def log_procrastination():
-    """Log a procrastination episode"""
+    """Log a procrastination episode with wizard flow and instant feedback."""
+    user_id = session["user_id"]
+    tasks = _fetch_active_tasks_for_log(user_id)
+
     if request.method == "POST":
-        task_id = request.form.get("task_id")
-        mood = request.form.get("mood")
-        energy_level_raw = request.form.get("energy_level")
-        environment = request.form.get("environment")
-        what_did_instead = request.form.get("what_did_instead")
-        trigger_reason = request.form.get("trigger_reason")
+        task_id_raw = (request.form.get("task_id") or "").strip()
+        intended_task_text = (request.form.get("intended_task_text") or "").strip()
+        mood = (request.form.get("mood") or "distracted").strip().lower()
+        mood_keys = {m["key"] for m in WIZARD_MOOD_OPTIONS}
+        if mood not in mood_keys:
+            mood = "distracted"
 
-        if not mood or not energy_level_raw:
-            return apology("must provide mood and energy level")
-
+        energy_level_raw = (request.form.get("energy_level") or "").strip()
         try:
-            energy_level = int(energy_level_raw)
+            energy_level = int(energy_level_raw) if energy_level_raw else 5
         except ValueError:
-            return apology("energy level must be a number", 400)
-        if energy_level < 1 or energy_level > 10:
-            return apology("energy level must be between 1 and 10", 400)
+            energy_level = 5
+        energy_level = max(1, min(10, energy_level))
+
+        environment = (request.form.get("environment") or "").strip().lower()
+        allowed_environments = {e["key"] for e in WIZARD_ENV_OPTIONS}
+        if environment not in allowed_environments:
+            environment = None
+
+        trigger_reason = (request.form.get("trigger_reason") or "").strip()
+        if trigger_reason not in WIZARD_TRIGGER_OPTIONS:
+            trigger_reason = None
+
+        details = (request.form.get("details") or "").strip()
+        details_value = details if details else None
+
+        task_id = None
+        if task_id_raw:
+            try:
+                candidate_task_id = int(task_id_raw)
+            except ValueError:
+                candidate_task_id = None
+
+            if candidate_task_id:
+                owned = db.execute(
+                    """
+                    SELECT id
+                    FROM tasks
+                    WHERE id = ? AND user_id = ? AND status IN ('pending', 'in_progress')
+                    """,
+                    candidate_task_id,
+                    user_id,
+                )
+                if owned:
+                    task_id = candidate_task_id
 
         try:
             db.execute("""
                 INSERT INTO procrastination_logs 
-                (task_id, user_id, mood, energy_level, environment, what_did_instead, trigger_reason)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, task_id if task_id else None, session["user_id"], mood, energy_level,
-                environment, what_did_instead, trigger_reason)
+                (task_id, user_id, mood, energy_level, environment, what_did_instead, trigger_reason, intended_task_text)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, task_id, user_id, mood, energy_level, environment, details_value, trigger_reason,
+                intended_task_text if intended_task_text else None)
         except Exception:
             logger.exception("Failed to insert procrastination log")
             return apology("could not log procrastination", 500)
 
-        flash("📊 Procrastination logged! Building your pattern...")
-        return redirect("/")
-    
-    # Get active tasks for the dropdown
-    tasks = db.execute("""
-        SELECT id, title FROM tasks 
-        WHERE user_id = ? AND status IN ('pending', 'in_progress')
-        ORDER BY importance DESC
-    """, session["user_id"])
-    
-    return render_template("log_session.html", tasks=tasks)
+        selected_task_title = intended_task_text if intended_task_text else "Unspecified task"
+        if task_id:
+            matched = next((t for t in tasks if t["id"] == task_id), None)
+            if matched:
+                selected_task_title = matched["title"]
+
+        insight = _build_log_insight(mood, energy_level)
+
+        return render_template(
+            "log_session.html",
+            tasks=tasks,
+            mood_options=WIZARD_MOOD_OPTIONS,
+            trigger_options=WIZARD_TRIGGER_OPTIONS,
+            environment_options=WIZARD_ENV_OPTIONS,
+            logged=True,
+            insight=insight,
+            logged_mood=mood,
+            logged_energy=energy_level,
+            logged_task=selected_task_title,
+        )
+
+    return render_template(
+        "log_session.html",
+        tasks=tasks,
+        mood_options=WIZARD_MOOD_OPTIONS,
+        trigger_options=WIZARD_TRIGGER_OPTIONS,
+        environment_options=WIZARD_ENV_OPTIONS,
+        logged=False,
+    )
 
 
 @app.route("/analytics")

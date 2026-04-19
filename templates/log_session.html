@@ -5,73 +5,160 @@
 {% block page_subtitle %}Capture the moment. Spot the pattern.{% endblock %}
 
 {% block content %}
-	<section class="panel" style="max-width: 920px; margin: 0 auto;">
-		<div class="panel-header">
-			<div>
-				<div class="panel-title">Procrastination moment</div>
-				<div class="help">This is data, not judgment.</div>
-			</div>
-		</div>
-		<div class="panel-body">
-			<form method="post" action="/log_procrastination" class="stack">
-				<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-				<input type="hidden" name="mood" id="moodInput" value="">
+	{% if logged %}
+		<section class="panel log-success-shell">
+			<div class="panel-body">
+				<div class="log-success-mark" aria-hidden="true">✓</div>
+				<div class="h2 mt-3">Logged! Here's what this tells us...</div>
+				<div class="muted mt-2 log-insight-text">{{ insight }}</div>
 
-				<div class="field">
-					<div class="label">Related task</div>
-					<select class="select" name="task_id">
-						<option value="">No specific task</option>
-						{% for t in tasks %}
-							<option value="{{ t.id }}">{{ t.title }}</option>
-						{% endfor %}
-					</select>
-					<div class="help">Optional. Helps connect logs to a task.</div>
+				<div class="log-success-meta mt-4">
+					<span class="badge dot info">Task: {{ logged_task }}</span>
+					<span class="badge dot warning">Mood: {{ logged_mood|capitalize }}</span>
+					<span class="badge dot success">Energy: {{ logged_energy }}/10</span>
 				</div>
 
-				<div class="field">
-					<div class="label">Mood</div>
-					<div class="mood-grid" id="moodGrid">
-						{% for m in ['happy','anxious','tired','frustrated','focused','overwhelmed','bored','excited'] %}
-							<div class="mood-option" data-mood="{{ m }}">
-								<div class="rowx" style="justify-content: flex-start; gap: 10px;">
-									<span class="mood-emoji">{{ m|get_mood_emoji }}</span>
-									<div style="font-weight: 800; text-transform: capitalize;">{{ m }}</div>
+				<div class="d-flex gap-2 mt-4">
+					<a class="btnx" href="/log_procrastination">Log another</a>
+					<a class="btnx btnx-primary" href="/">Back to dashboard</a>
+				</div>
+			</div>
+		</section>
+	{% else %}
+		<form method="post" action="/log_procrastination" id="logWizardForm" class="panel log-wizard-shell">
+			<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+			<input type="hidden" name="task_id" id="selectedTaskId" value="">
+			<input type="hidden" name="mood" id="moodInput" value="distracted">
+			<input type="hidden" name="trigger_reason" id="triggerInput" value="">
+			<input type="hidden" name="environment" id="environmentInput" value="">
+
+			<div class="panel-header log-wizard-top">
+				<div>
+					<div class="panel-title">Procrastination pulse wizard</div>
+					<div class="help">This is data, not judgment. Capture it in under 20 seconds.</div>
+				</div>
+				<button class="btnx" type="submit">Skip to save</button>
+			</div>
+
+			<div class="panel-body">
+				<div class="wiz-progress" id="wizProgress" aria-label="Wizard progress">
+					<div class="wiz-step-chip is-active" data-step-chip="0">
+						<span class="wiz-step-num">1</span>
+						<span>Task</span>
+					</div>
+					<div class="wiz-step-chip" data-step-chip="1">
+						<span class="wiz-step-num">2</span>
+						<span>Feeling</span>
+					</div>
+					<div class="wiz-step-chip" data-step-chip="2">
+						<span class="wiz-step-num">3</span>
+						<span>Context</span>
+					</div>
+				</div>
+
+				<div class="wiz-viewport">
+					<div class="wiz-track" id="wizTrack">
+						<section class="wiz-step" data-step="0">
+							<div class="h2">What were you supposed to do?</div>
+							<div class="help mt-1">Choose a task card, or type what you intended to do.</div>
+
+							{% if tasks %}
+								<div class="task-choice-grid mt-3" id="taskChoiceGrid">
+									{% for t in tasks %}
+										<button class="task-choice-card" type="button" data-task-choice data-task-id="{{ t.id }}">
+											<div class="rowx rowx-start">
+												<div class="task-choice-title">{{ t.title }}</div>
+												<span class="badge">Importance {{ t.importance }}/5</span>
+											</div>
+											{% if t.description %}
+												<div class="muted mt-2">{{ t.description }}</div>
+											{% endif %}
+											<div class="help mt-2">{{ t.deadline_countdown }}</div>
+										</button>
+									{% endfor %}
+								</div>
+							{% else %}
+								<div class="muted mt-3">No active tasks found. You can just type the task below.</div>
+							{% endif %}
+
+							<div class="field mt-3">
+								<div class="label">Or write it quickly</div>
+								<input class="input" id="intendedTaskInput" name="intended_task_text" placeholder="e.g., Prepare assignment draft for Monday">
+							</div>
+
+							<div class="rowx mt-4 justify-content-end">
+								<button class="btnx btnx-primary" type="button" data-next-step>Next</button>
+							</div>
+						</section>
+
+						<section class="wiz-step" data-step="1">
+							<div class="h2">How are you feeling?</div>
+							<div class="help mt-1">Choose the feeling that best matches the moment.</div>
+
+							<div class="mood-mega-grid mt-3" id="moodMegaGrid">
+								{% for mood in mood_options %}
+									<button class="mood-mega {% if mood.key == 'distracted' %}is-selected{% endif %}" type="button" data-mood-choice data-mood="{{ mood.key }}">
+										<span class="mood-mega-emoji">{{ mood.emoji }}</span>
+										<span class="mood-mega-label">{{ mood.label }}</span>
+									</button>
+								{% endfor %}
+							</div>
+
+							<div class="field mt-4">
+								<div class="rowx">
+									<label class="label" for="energySlider">Energy level right now</label>
+									<div><strong id="energyValue">5</strong>/10</div>
+								</div>
+								<input class="range" type="range" name="energy_level" id="energySlider" min="1" max="10" value="5">
+								<div class="energy-meter">
+									<div class="energy-fill" id="energyFill"></div>
 								</div>
 							</div>
-						{% endfor %}
+
+							<div class="rowx mt-4">
+								<button class="btnx" type="button" data-prev-step>Back</button>
+								<button class="btnx btnx-primary" type="button" data-next-step>Next</button>
+							</div>
+						</section>
+
+						<section class="wiz-step" data-step="2">
+							<div class="h2">Tell us more (optional)</div>
+							<div class="help mt-1">Pick what triggered it and where it happened.</div>
+
+							<div class="field mt-3">
+								<div class="label">Trigger category</div>
+								<div class="trigger-pills" id="triggerPills">
+									{% for trig in trigger_options %}
+										<button class="trigger-pill" type="button" data-trigger-choice data-trigger="{{ trig }}">{{ trig }}</button>
+									{% endfor %}
+								</div>
+							</div>
+
+							<div class="field mt-3">
+								<div class="label">Any detail to capture?</div>
+								<textarea class="textarea" name="details" placeholder="What happened instead? What thought loop showed up?"></textarea>
+							</div>
+
+							<div class="field mt-3">
+								<div class="label">Environment</div>
+								<div class="env-grid" id="envGrid">
+									{% for env in environment_options %}
+										<button class="env-card" type="button" data-env-choice data-env="{{ env.key }}">
+											<span class="env-emoji">{{ env.emoji }}</span>
+											<span class="env-label">{{ env.label }}</span>
+										</button>
+									{% endfor %}
+								</div>
+							</div>
+
+							<div class="rowx mt-4">
+								<button class="btnx" type="button" data-prev-step>Back</button>
+								<button class="btnx btnx-primary" type="submit">Save log</button>
+							</div>
+						</section>
 					</div>
 				</div>
-
-				<div class="field">
-					<div class="label">Energy level: <span id="energyValue">5</span>/10</div>
-					<input class="range" type="range" name="energy_level" id="energySlider" min="1" max="10" value="5" required>
-				</div>
-
-				<div class="row g-3">
-					<div class="col-md-6">
-						<div class="field">
-							<div class="label">Environment</div>
-							<input class="input" name="environment" placeholder="e.g., library, bedroom, cafe">
-						</div>
-					</div>
-					<div class="col-md-6">
-						<div class="field">
-							<div class="label">Trigger</div>
-							<input class="input" name="trigger_reason" placeholder="e.g., too hard, unclear, tired, distracted">
-						</div>
-					</div>
-				</div>
-
-				<div class="field">
-					<div class="label">What did you do instead?</div>
-					<textarea class="textarea" name="what_did_instead" placeholder="Be honest — this is for patterns."></textarea>
-				</div>
-
-				<div class="rowx">
-					<a class="btnx" href="/">Cancel</a>
-					<button class="btnx btnx-primary" type="submit">Save log</button>
-				</div>
-			</form>
-		</div>
-	</section>
+			</div>
+		</form>
+	{% endif %}
 {% endblock %}

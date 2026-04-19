@@ -44,13 +44,14 @@ def get_mood_emoji(mood):
     """Get emoji for mood."""
     mood_emojis = {
         "happy": "😊",
-        "anxious": "😰", 
+        "anxious": "😟",
         "tired": "😴",
         "frustrated": "😤",
         "focused": "🎯",
-        "overwhelmed": "😵‍💫",
+        "overwhelmed": "😰",
         "bored": "😑",
-        "excited": "🤩"
+        "excited": "🤩",
+        "distracted": "🤔",
     }
     return mood_emojis.get(mood.lower(), "😐")
 
