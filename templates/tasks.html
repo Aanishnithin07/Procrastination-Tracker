@@ -1,0 +1,214 @@
+{% extends "layout.html" %}
+
+{% block title %}Tasks · ProcrastiNation{% endblock %}
+{% block page_title %}Tasks{% endblock %}
+{% block page_subtitle %}Plan, prioritize, and execute with intention.{% endblock %}
+
+{% block content %}
+	<div class="tasks-page stack" id="tasksPage" data-csrf="{{ csrf_token() }}">
+		<section class="panel">
+			<div class="panel-header tasks-header">
+				<div>
+					<div class="panel-title">Task management</div>
+					<div class="help">Everything in one place: search, filter, sort, edit, and bulk actions.</div>
+				</div>
+				<div class="tasks-header-actions">
+					<span class="badge tasks-count" id="tasksCountBadge">{{ task_count }} tasks</span>
+					<a class="btnx btnx-primary" href="/add_task">+ New Task</a>
+				</div>
+			</div>
+
+			<div class="panel-body stack">
+				<div class="tasks-filter-wrap" aria-label="Task filters">
+					<div class="tasks-filter-group">
+						<span class="label">Status</span>
+						<div class="tasks-pills">
+							<button class="tasks-pill is-active" type="button" data-filter-group="status" data-filter-value="all">All</button>
+							<button class="tasks-pill" type="button" data-filter-group="status" data-filter-value="pending">Pending</button>
+							<button class="tasks-pill" type="button" data-filter-group="status" data-filter-value="in_progress">In Progress</button>
+							<button class="tasks-pill" type="button" data-filter-group="status" data-filter-value="completed">Done</button>
+							<button class="tasks-pill" type="button" data-filter-group="status" data-filter-value="abandoned">Abandoned</button>
+						</div>
+					</div>
+
+					<div class="tasks-filter-group">
+						<span class="label">Importance</span>
+						<div class="tasks-pills">
+							<button class="tasks-pill is-active" type="button" data-filter-group="importance" data-filter-value="any">Any</button>
+							<button class="tasks-pill" type="button" data-filter-group="importance" data-filter-value="critical">Critical</button>
+							<button class="tasks-pill" type="button" data-filter-group="importance" data-filter-value="high">High</button>
+							<button class="tasks-pill" type="button" data-filter-group="importance" data-filter-value="medium">Medium</button>
+							<button class="tasks-pill" type="button" data-filter-group="importance" data-filter-value="low">Low</button>
+						</div>
+					</div>
+
+					<div class="tasks-filter-group">
+						<span class="label">Due</span>
+						<div class="tasks-pills">
+							<button class="tasks-pill is-active" type="button" data-filter-group="due" data-filter-value="any">Any</button>
+							<button class="tasks-pill" type="button" data-filter-group="due" data-filter-value="overdue">Overdue</button>
+							<button class="tasks-pill" type="button" data-filter-group="due" data-filter-value="today">Today</button>
+							<button class="tasks-pill" type="button" data-filter-group="due" data-filter-value="week">This Week</button>
+						</div>
+					</div>
+				</div>
+
+				<div class="tasks-search-sort">
+					<div class="field tasks-search-field">
+						<label class="label" for="tasksSearchInput">Search</label>
+						<input class="input" id="tasksSearchInput" type="search" placeholder="Search tasks by title or description...">
+					</div>
+
+					<div class="tasks-sort-controls">
+						<div class="field tasks-sort-field">
+							<label class="label" for="tasksSortBy">Sort by</label>
+							<select class="select" id="tasksSortBy">
+								<option value="deadline">Deadline</option>
+								<option value="importance">Importance</option>
+								<option value="created">Created</option>
+								<option value="title">Title</option>
+							</select>
+						</div>
+						<button class="btnx" id="tasksSortDir" data-direction="asc" type="button" aria-label="Toggle sort direction">ASC</button>
+					</div>
+				</div>
+
+				<div class="tasks-select-row">
+					<label class="tasks-select-all-wrap">
+						<input id="tasksSelectAll" type="checkbox">
+						<span>Select all visible</span>
+					</label>
+					<div class="help" id="tasksVisibleCount"></div>
+				</div>
+
+				<div class="tasks-list" id="tasksList">
+					{% for task in tasks %}
+						<article
+							class="taskm-card"
+							data-task-id="{{ task.id }}"
+							data-status="{{ task.status }}"
+							data-importance="{{ task.importance }}"
+							data-importance-band="{{ task.importance_band }}"
+							data-due-category="{{ task.due_category }}"
+							data-title="{{ task.title|lower|e }}"
+							data-desc="{{ task.description_snippet|lower|e }}"
+							data-created-sort="{{ task.created_sort }}"
+							data-deadline-sort="{{ task.deadline_sort }}"
+						>
+							<div class="taskm-importance-bar imp-{{ task.importance }}" aria-hidden="true"></div>
+							<div class="taskm-card-main">
+								<div class="taskm-row-top">
+									<label class="taskm-check-wrap">
+										<input class="taskm-check" type="checkbox" aria-label="Select {{ task.title }}">
+									</label>
+									<div class="taskm-title-wrap">
+										<div class="taskm-title" data-role="title">{{ task.title }}</div>
+										<div class="taskm-desc" data-role="desc">
+											{% if task.description_snippet %}
+												{{ task.description_snippet }}
+											{% else %}
+												<span class="muted">No description yet.</span>
+											{% endif %}
+										</div>
+									</div>
+								</div>
+
+								<div class="taskm-meta">
+									<span class="badge dot taskm-deadline-badge {% if task.deadline_state == 'overdue' %}danger{% elif task.deadline_state == 'today' %}warning{% elif task.deadline_state == 'soon' %}info{% else %}info{% endif %}" data-role="deadline">{{ task.deadline_countdown }}</span>
+									<span class="badge taskm-status-badge taskm-status-{{ task.status }}" data-role="status">{{ task.status_label }}</span>
+									<span class="badge" data-role="estimate">Est {{ task.estimated_label }}</span>
+									<span class="badge">Created {{ task.created_label }}</span>
+								</div>
+
+								<div class="taskm-actions">
+									<button class="btnx taskm-btn-start {% if task.status != 'pending' %}is-hidden{% endif %}" type="button" data-task-action="start">Start</button>
+									<button class="btnx btnx-primary taskm-btn-complete {% if task.status == 'completed' %}is-hidden{% endif %}" type="button" data-task-action="complete">Complete</button>
+									<button class="btnx" type="button" data-open-edit>Edit</button>
+									<button class="btnx btnx-danger" type="button" data-task-action="delete" data-confirm="Delete this task permanently?">Delete</button>
+								</div>
+
+								<div class="taskm-edit" data-edit-panel hidden>
+									<form class="taskm-edit-form stack" data-edit-form>
+										<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+										<div class="field">
+											<label class="label">Title</label>
+											<input class="input" name="title" value="{{ task.title }}" required>
+										</div>
+										<div class="field">
+											<label class="label">Description</label>
+											<textarea class="textarea" name="description">{{ task.description }}</textarea>
+										</div>
+										<div class="row g-3">
+											<div class="col-md-4">
+												<div class="field">
+													<label class="label">Est minutes</label>
+													<input class="input" name="estimated_time" inputmode="numeric" value="{{ task.estimated_time or '' }}">
+												</div>
+											</div>
+											<div class="col-md-4">
+												<div class="field">
+													<label class="label">Importance</label>
+													<select class="select" name="importance">
+														<option value="1" {% if task.importance == 1 %}selected{% endif %}>1</option>
+														<option value="2" {% if task.importance == 2 %}selected{% endif %}>2</option>
+														<option value="3" {% if task.importance == 3 %}selected{% endif %}>3</option>
+														<option value="4" {% if task.importance == 4 %}selected{% endif %}>4</option>
+														<option value="5" {% if task.importance == 5 %}selected{% endif %}>5</option>
+													</select>
+												</div>
+											</div>
+											<div class="col-md-4">
+												<div class="field">
+													<label class="label">Deadline</label>
+													<input class="input" name="deadline" type="datetime-local" value="{{ task.deadline_input }}">
+												</div>
+											</div>
+										</div>
+										<div class="taskm-edit-actions">
+											<button class="btnx" type="button" data-cancel-edit>Cancel</button>
+											<button class="btnx btnx-primary" type="submit">Save</button>
+										</div>
+									</form>
+								</div>
+							</div>
+						</article>
+					{% endfor %}
+				</div>
+
+				<div class="tasks-no-results" id="tasksNoResults" hidden>
+					<div class="help">No tasks match your current filters and search.</div>
+				</div>
+
+				<section class="tasks-empty-state" id="tasksEmptyState" {% if tasks %}hidden{% endif %}>
+					<svg class="tasks-empty-illustration" viewBox="0 0 240 150" aria-hidden="true">
+						<defs>
+							<linearGradient id="emptyGrad" x1="0" y1="0" x2="1" y2="1">
+								<stop offset="0%" stop-color="rgba(108, 99, 255, 0.85)"/>
+								<stop offset="100%" stop-color="rgba(59, 130, 246, 0.75)"/>
+							</linearGradient>
+						</defs>
+						<rect x="56" y="26" width="128" height="96" rx="16" fill="rgba(255,255,255,0.08)" stroke="rgba(255,255,255,0.20)"/>
+						<rect x="72" y="46" width="96" height="10" rx="5" fill="url(#emptyGrad)"/>
+						<rect x="72" y="66" width="82" height="8" rx="4" fill="rgba(255,255,255,0.20)"/>
+						<rect x="72" y="82" width="66" height="8" rx="4" fill="rgba(255,255,255,0.16)"/>
+						<circle cx="188" cy="44" r="14" fill="rgba(108, 99, 255, 0.22)"/>
+						<path d="M183 44l4 4 8-8" stroke="rgba(255,255,255,0.9)" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+					</svg>
+					<div class="h2">No tasks yet</div>
+					<div class="muted">Add your first task and turn intention into momentum.</div>
+					<a class="btnx btnx-primary" href="/add_task">Add your first task</a>
+				</section>
+			</div>
+		</section>
+
+		<div class="tasks-bulk-bar" id="tasksBulkBar" hidden>
+			<div class="tasks-bulk-inner">
+				<div><strong id="tasksSelectedCount">0</strong> selected</div>
+				<div class="tasks-bulk-actions">
+					<button class="btnx btnx-primary" type="button" id="tasksBulkComplete">Mark Complete</button>
+					<button class="btnx btnx-danger" type="button" id="tasksBulkDelete" data-confirm="Delete selected tasks permanently?">Delete Selected</button>
+				</div>
+			</div>
+		</div>
+	</div>
+{% endblock %}

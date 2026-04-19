@@ -152,6 +152,13 @@ WIZARD_ENV_OPTIONS = [
     {"key": "bed", "label": "Bed", "emoji": "🛏"},
 ]
 
+TASK_STATUS_LABELS = {
+    "pending": "Pending",
+    "in_progress": "In Progress",
+    "completed": "Done",
+    "abandoned": "Abandoned",
+}
+
 
 def _get_user_initials(username: str) -> str:
     if not username:
@@ -305,6 +312,115 @@ def _build_log_insight(mood: str, energy_level: int) -> str:
     if energy_level >= 8:
         return "Energy is available. Your best lever now is clarity: pick one deliverable and finish it before switching."
     return "You captured a valuable signal. Repeating this log over time will help isolate your highest-impact trigger."
+
+
+def _task_status_label(status: str) -> str:
+    return TASK_STATUS_LABELS.get(status, "Unknown")
+
+
+def _task_importance_band(importance: int) -> str:
+    if importance >= 5:
+        return "critical"
+    if importance == 4:
+        return "high"
+    if importance == 3:
+        return "medium"
+    return "low"
+
+
+def _task_deadline_meta(deadline_raw):
+    deadline_dt = _parse_sqlite_datetime(deadline_raw)
+    if not deadline_dt:
+        return {
+            "deadline_countdown": "No deadline",
+            "deadline_state": "none",
+            "due_category": "any",
+            "deadline_sort": 9999999999,
+            "deadline_input": "",
+        }
+
+    today = datetime.utcnow().date()
+    due_date = deadline_dt.date()
+    deadline_input = deadline_dt.strftime("%Y-%m-%dT%H:%M")
+
+    if due_date < today:
+        days = (today - due_date).days
+        label = f"OVERDUE {days} day{'s' if days != 1 else ''}"
+        return {
+            "deadline_countdown": label,
+            "deadline_state": "overdue",
+            "due_category": "overdue",
+            "deadline_sort": int(deadline_dt.timestamp()),
+            "deadline_input": deadline_input,
+        }
+
+    if due_date == today:
+        return {
+            "deadline_countdown": "Due today",
+            "deadline_state": "today",
+            "due_category": "today",
+            "deadline_sort": int(deadline_dt.timestamp()),
+            "deadline_input": deadline_input,
+        }
+
+    days = (due_date - today).days
+    week_end = today + timedelta(days=(6 - today.weekday()))
+    due_category = "week" if due_date <= week_end else "later"
+
+    return {
+        "deadline_countdown": f"Due in {days} day{'s' if days != 1 else ''}",
+        "deadline_state": "soon" if days <= 3 else "normal",
+        "due_category": due_category,
+        "deadline_sort": int(deadline_dt.timestamp()),
+        "deadline_input": deadline_input,
+    }
+
+
+def _serialize_task_for_tasks_page(task):
+    importance = int(task.get("importance") or 3)
+    importance = max(1, min(5, importance))
+
+    created_dt = _parse_sqlite_datetime(task.get("created_at"))
+    created_sort = int(created_dt.timestamp()) if created_dt else 0
+    created_label = created_dt.strftime("%b %d, %Y") if created_dt else "Unknown"
+
+    description = (task.get("description") or "").strip()
+    description_snippet = description
+    if len(description_snippet) > 140:
+        description_snippet = f"{description_snippet[:137].rstrip()}..."
+
+    deadline_meta = _task_deadline_meta(task.get("deadline"))
+    status = task.get("status") or "pending"
+
+    return {
+        "id": int(task["id"]),
+        "title": task.get("title") or "Untitled",
+        "description": description,
+        "description_snippet": description_snippet,
+        "estimated_time": task.get("estimated_time"),
+        "estimated_label": format_time(task.get("estimated_time")),
+        "importance": importance,
+        "importance_band": _task_importance_band(importance),
+        "status": status,
+        "status_label": _task_status_label(status),
+        "status_class": f"taskm-status-{status}",
+        "created_sort": created_sort,
+        "created_label": created_label,
+        **deadline_meta,
+    }
+
+
+def _fetch_task_row_for_user(task_id: int, user_id: int):
+    rows = db.execute(
+        """
+        SELECT id, title, description, estimated_time, importance, deadline, status, created_at, completed_at
+        FROM tasks
+        WHERE id = ? AND user_id = ?
+        """,
+        task_id,
+        user_id,
+    )
+    return rows[0] if rows else None
 
 
 def _parse_iso_date(value):
@@ -1074,6 +1190,222 @@ def add_task():
         return redirect("/")
     
     return render_template("add_task.html")
+
+
+@app.route("/tasks", methods=["GET", "POST"])
+@login_required
+def tasks():
+    """Task management page with inline update and bulk operations."""
+    user_id = session["user_id"]
+
+    def wants_json() -> bool:
+        accept = request.headers.get("Accept") or ""
+        return request.headers.get("X-Requested-With") == "XMLHttpRequest" or "application/json" in accept
+
+    def json_error(message: str, code: int = 400):
+        if wants_json():
+            return jsonify({"ok": False, "error": message}), code
+        flash(message)
+        return redirect("/tasks")
+
+    if request.method == "POST":
+        action = (request.form.get("action") or "").strip()
+
+        if action in {"start_task", "complete_task", "delete_task", "edit_task"}:
+            task_id_raw = (request.form.get("task_id") or "").strip()
+            try:
+                task_id = int(task_id_raw)
+            except ValueError:
+                return json_error("Invalid task id", 400)
+
+            task_row = _fetch_task_row_for_user(task_id, user_id)
+            if not task_row:
+                return json_error("Task not found", 404)
+
+            if action == "start_task":
+                next_order = _next_board_order(user_id, "in_progress")
+                db.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'in_progress',
+                        board_order = ?,
+                        completed_at = NULL
+                    WHERE id = ? AND user_id = ?
+                    """,
+                    next_order,
+                    task_id,
+                    user_id,
+                )
+                updated = _fetch_task_row_for_user(task_id, user_id)
+                payload = {"ok": True, "task": _serialize_task_for_tasks_page(updated)}
+                if wants_json():
+                    return jsonify(payload)
+                flash("Task started.")
+                return redirect("/tasks")
+
+            if action == "complete_task":
+                next_order = _next_board_order(user_id, "completed")
+                db.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'completed',
+                        board_order = ?,
+                        completed_at = datetime('now')
+                    WHERE id = ? AND user_id = ?
+                    """,
+                    next_order,
+                    task_id,
+                    user_id,
+                )
+                updated = _fetch_task_row_for_user(task_id, user_id)
+                payload = {"ok": True, "task": _serialize_task_for_tasks_page(updated)}
+                if wants_json():
+                    return jsonify(payload)
+                flash("Task completed.")
+                return redirect("/tasks")
+
+            if action == "delete_task":
+                db.execute("DELETE FROM tasks WHERE id = ? AND user_id = ?", task_id, user_id)
+                payload = {"ok": True, "deleted_ids": [task_id]}
+                if wants_json():
+                    return jsonify(payload)
+                flash("Task deleted.")
+                return redirect("/tasks")
+
+            if action == "edit_task":
+                title = (request.form.get("title") or "").strip()
+                description = (request.form.get("description") or "").strip() or None
+                estimated_raw = (request.form.get("estimated_time") or "").strip()
+                importance_raw = (request.form.get("importance") or "").strip()
+                deadline_raw = (request.form.get("deadline") or "").strip()
+
+                if not title:
+                    return json_error("Title is required", 400)
+
+                estimated_time = None
+                if estimated_raw:
+                    try:
+                        estimated_time = int(estimated_raw)
+                    except ValueError:
+                        return json_error("Estimated time must be a number", 400)
+                    if estimated_time <= 0:
+                        return json_error("Estimated time must be positive", 400)
+
+                try:
+                    importance = int(importance_raw) if importance_raw else 3
+                except ValueError:
+                    return json_error("Importance must be between 1 and 5", 400)
+                if importance < 1 or importance > 5:
+                    return json_error("Importance must be between 1 and 5", 400)
+
+                deadline_value = None
+                if deadline_raw:
+                    try:
+                        deadline_value = datetime.strptime(deadline_raw, "%Y-%m-%dT%H:%M")
+                    except ValueError:
+                        return json_error("Invalid deadline format", 400)
+
+                db.execute(
+                    """
+                    UPDATE tasks
+                    SET title = ?,
+                        description = ?,
+                        estimated_time = ?,
+                        importance = ?,
+                        deadline = ?
+                    WHERE id = ? AND user_id = ?
+                    """,
+                    title,
+                    description,
+                    estimated_time,
+                    importance,
+                    deadline_value,
+                    task_id,
+                    user_id,
+                )
+
+                updated = _fetch_task_row_for_user(task_id, user_id)
+                payload = {"ok": True, "task": _serialize_task_for_tasks_page(updated)}
+                if wants_json():
+                    return jsonify(payload)
+                flash("Task updated.")
+                return redirect("/tasks")
+
+        if action in {"bulk_complete", "bulk_delete"}:
+            raw_ids = request.form.getlist("task_ids")
+            task_ids = []
+            for raw in raw_ids:
+                try:
+                    task_id = int(raw)
+                except ValueError:
+                    continue
+                if task_id > 0 and task_id not in task_ids:
+                    task_ids.append(task_id)
+
+            if not task_ids:
+                return json_error("No tasks selected", 400)
+
+            placeholders = ", ".join("?" for _ in task_ids)
+            owned_rows = db.execute(
+                f"SELECT id FROM tasks WHERE user_id = ? AND id IN ({placeholders})",
+                user_id,
+                *task_ids,
+            )
+            owned_ids = [row["id"] for row in owned_rows]
+            if not owned_ids:
+                return json_error("No owned tasks found", 404)
+
+            if action == "bulk_complete":
+                base_order = _next_board_order(user_id, "completed")
+                for offset, task_id in enumerate(owned_ids):
+                    db.execute(
+                        """
+                        UPDATE tasks
+                        SET status = 'completed',
+                            board_order = ?,
+                            completed_at = datetime('now')
+                        WHERE id = ? AND user_id = ?
+                        """,
+                        base_order + offset,
+                        task_id,
+                        user_id,
+                    )
+
+                updated_rows = [_fetch_task_row_for_user(task_id, user_id) for task_id in owned_ids]
+                updated_tasks = [_serialize_task_for_tasks_page(row) for row in updated_rows if row]
+                payload = {"ok": True, "updated_ids": owned_ids, "updated_tasks": updated_tasks}
+                if wants_json():
+                    return jsonify(payload)
+                flash(f"Marked {len(owned_ids)} tasks complete.")
+                return redirect("/tasks")
+
+            if action == "bulk_delete":
+                delete_placeholders = ", ".join("?" for _ in owned_ids)
+                db.execute(
+                    f"DELETE FROM tasks WHERE user_id = ? AND id IN ({delete_placeholders})",
+                    user_id,
+                    *owned_ids,
+                )
+                payload = {"ok": True, "deleted_ids": owned_ids}
+                if wants_json():
+                    return jsonify(payload)
+                flash(f"Deleted {len(owned_ids)} tasks.")
+                return redirect("/tasks")
+
+        return json_error("Unknown action", 400)
+
+    rows = db.execute(
+        """
+        SELECT id, title, description, estimated_time, importance, deadline, status, created_at, completed_at
+        FROM tasks
+        WHERE user_id = ?
+        ORDER BY datetime(created_at) DESC, id DESC
+        """,
+        user_id,
+    )
+
+    serialized_tasks = [_serialize_task_for_tasks_page(row) for row in rows]
+    return render_template("tasks.html", tasks=serialized_tasks, task_count=len(serialized_tasks))
 
 
 @app.route("/api/tasks/quick_add", methods=["POST"])

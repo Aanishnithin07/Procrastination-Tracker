@@ -251,6 +251,464 @@ document.addEventListener('DOMContentLoaded', () => {
 		renderStep();
 	}
 
+	// Tasks management page
+	const tasksRoot = document.getElementById('tasksPage');
+	if (tasksRoot) {
+		const csrfToken = tasksRoot.getAttribute('data-csrf') || '';
+		const tasksList = document.getElementById('tasksList');
+		const tasksCountBadge = document.getElementById('tasksCountBadge');
+		const noResults = document.getElementById('tasksNoResults');
+		const emptyState = document.getElementById('tasksEmptyState');
+		const visibleCount = document.getElementById('tasksVisibleCount');
+		const selectAll = document.getElementById('tasksSelectAll');
+		const bulkBar = document.getElementById('tasksBulkBar');
+		const selectedCount = document.getElementById('tasksSelectedCount');
+		const bulkCompleteBtn = document.getElementById('tasksBulkComplete');
+		const bulkDeleteBtn = document.getElementById('tasksBulkDelete');
+		const searchInput = document.getElementById('tasksSearchInput');
+		const sortBy = document.getElementById('tasksSortBy');
+		const sortDirBtn = document.getElementById('tasksSortDir');
+		const filterPills = [...tasksRoot.querySelectorAll('[data-filter-group]')];
+
+		let cards = tasksList ? [...tasksList.querySelectorAll('.taskm-card')] : [];
+		const filterState = {
+			status: 'all',
+			importance: 'any',
+			due: 'any',
+			query: '',
+		};
+
+		const toNumber = (value, fallback = 0) => {
+			const n = Number(value);
+			return Number.isFinite(n) ? n : fallback;
+		};
+
+		const formatEstimated = (minutesRaw) => {
+			const minutes = toNumber(minutesRaw, 0);
+			if (minutes <= 0) return 'Not specified';
+			const hours = Math.floor(minutes / 60);
+			const mins = minutes % 60;
+			if (hours <= 0) return `${mins}m`;
+			if (mins === 0) return `${hours}h`;
+			return `${hours}h ${mins}m`;
+		};
+
+		const importanceBand = (importanceRaw) => {
+			const level = toNumber(importanceRaw, 1);
+			if (level >= 5) return 'critical';
+			if (level === 4) return 'high';
+			if (level === 3) return 'medium';
+			return 'low';
+		};
+
+		const deadlineVariant = (state) => {
+			if (state === 'overdue') return 'danger';
+			if (state === 'today') return 'warning';
+			if (state === 'soon') return 'info';
+			return 'info';
+		};
+
+		const statusClassMap = {
+			pending: 'taskm-status-pending',
+			in_progress: 'taskm-status-in_progress',
+			completed: 'taskm-status-completed',
+			abandoned: 'taskm-status-abandoned',
+		};
+
+		const sendTaskRequest = async (formData) => {
+			if (!formData.get('csrf_token')) formData.set('csrf_token', csrfToken);
+			const res = await fetch('/tasks', {
+				method: 'POST',
+				headers: {
+					'X-Requested-With': 'XMLHttpRequest',
+					'X-CSRF-Token': csrfToken,
+					Accept: 'application/json',
+				},
+				body: formData,
+			});
+			let data = {};
+			try {
+				data = await res.json();
+			} catch {
+				data = {};
+			}
+			if (!res.ok || !data.ok) {
+				throw new Error(data.error || 'Task action failed');
+			}
+			return data;
+		};
+
+		const updateCounts = (visibleCards) => {
+			const total = cards.length;
+			if (tasksCountBadge) {
+				tasksCountBadge.textContent = `${total} task${total === 1 ? '' : 's'}`;
+			}
+			if (visibleCount) {
+				visibleCount.textContent = `Showing ${visibleCards.length} of ${total}`;
+			}
+		};
+
+		const updateEmptyState = () => {
+			if (!emptyState) return;
+			emptyState.hidden = cards.length !== 0;
+		};
+
+		const getSelectedCards = () => cards.filter((card) => {
+			const check = card.querySelector('.taskm-check');
+			return !!(check && check.checked);
+		});
+
+		const updateBulkBar = () => {
+			const selected = getSelectedCards();
+			if (bulkBar) bulkBar.hidden = selected.length === 0;
+			if (selectedCount) selectedCount.textContent = String(selected.length);
+
+			const visibleCards = cards.filter((card) => !card.hidden);
+			const visibleChecks = visibleCards.map((card) => card.querySelector('.taskm-check')).filter(Boolean);
+			const checkedVisible = visibleChecks.filter((check) => check.checked).length;
+			if (selectAll) {
+				selectAll.checked = visibleChecks.length > 0 && checkedVisible === visibleChecks.length;
+				selectAll.indeterminate = checkedVisible > 0 && checkedVisible < visibleChecks.length;
+			}
+		};
+
+		const matchesFilter = (card) => {
+			if (filterState.status !== 'all' && card.getAttribute('data-status') !== filterState.status) return false;
+			if (filterState.importance !== 'any' && card.getAttribute('data-importance-band') !== filterState.importance) return false;
+			if (filterState.due !== 'any' && card.getAttribute('data-due-category') !== filterState.due) return false;
+
+			if (filterState.query) {
+				const blob = `${card.getAttribute('data-title') || ''} ${(card.getAttribute('data-desc') || '')}`;
+				if (!blob.includes(filterState.query)) return false;
+			}
+
+			return true;
+		};
+
+		const sortVisibleCards = (visibleCards) => {
+			const key = sortBy ? sortBy.value : 'deadline';
+			const direction = (sortDirBtn && sortDirBtn.getAttribute('data-direction') === 'desc') ? -1 : 1;
+
+			visibleCards.sort((a, b) => {
+				if (key === 'title') {
+					const av = (a.getAttribute('data-title') || '').toLowerCase();
+					const bv = (b.getAttribute('data-title') || '').toLowerCase();
+					return av.localeCompare(bv) * direction;
+				}
+
+				if (key === 'importance') {
+					const av = toNumber(a.getAttribute('data-importance'), 0);
+					const bv = toNumber(b.getAttribute('data-importance'), 0);
+					return (av - bv) * direction;
+				}
+
+				if (key === 'created') {
+					const av = toNumber(a.getAttribute('data-created-sort'), 0);
+					const bv = toNumber(b.getAttribute('data-created-sort'), 0);
+					return (av - bv) * direction;
+				}
+
+				const av = toNumber(a.getAttribute('data-deadline-sort'), 9999999999);
+				const bv = toNumber(b.getAttribute('data-deadline-sort'), 9999999999);
+				return (av - bv) * direction;
+			});
+		};
+
+		const applyFiltersAndSort = () => {
+			const visible = [];
+			cards.forEach((card) => {
+				const isVisible = matchesFilter(card);
+				card.hidden = !isVisible;
+				if (isVisible) visible.push(card);
+			});
+
+			sortVisibleCards(visible);
+			visible.forEach((card) => tasksList.appendChild(card));
+
+			if (noResults) {
+				noResults.hidden = !(cards.length > 0 && visible.length === 0);
+			}
+
+			updateCounts(visible);
+			updateBulkBar();
+			updateEmptyState();
+		};
+
+		const applyTaskToCard = (card, task) => {
+			if (!card || !task) return;
+
+			card.setAttribute('data-status', task.status || 'pending');
+			card.setAttribute('data-importance', String(toNumber(task.importance, 3)));
+			card.setAttribute('data-importance-band', task.importance_band || importanceBand(task.importance));
+			card.setAttribute('data-due-category', task.due_category || 'any');
+			card.setAttribute('data-title', String(task.title || '').toLowerCase());
+			card.setAttribute('data-desc', String(task.description_snippet || '').toLowerCase());
+			card.setAttribute('data-created-sort', String(toNumber(task.created_sort, 0)));
+			card.setAttribute('data-deadline-sort', String(toNumber(task.deadline_sort, 9999999999)));
+
+			const titleEl = card.querySelector('[data-role="title"]');
+			if (titleEl) titleEl.textContent = task.title || 'Untitled';
+
+			const descEl = card.querySelector('[data-role="desc"]');
+			if (descEl) {
+				descEl.textContent = task.description_snippet || 'No description yet.';
+			}
+
+			const deadlineEl = card.querySelector('[data-role="deadline"]');
+			if (deadlineEl) {
+				deadlineEl.textContent = task.deadline_countdown || 'No deadline';
+				deadlineEl.classList.remove('danger', 'warning', 'info', 'success');
+				deadlineEl.classList.add(deadlineVariant(task.deadline_state || 'none'));
+			}
+
+			const statusEl = card.querySelector('[data-role="status"]');
+			if (statusEl) {
+				statusEl.textContent = task.status_label || 'Pending';
+				Object.values(statusClassMap).forEach((cls) => statusEl.classList.remove(cls));
+				const cls = statusClassMap[task.status || 'pending'];
+				if (cls) statusEl.classList.add(cls);
+			}
+
+			const estimateEl = card.querySelector('[data-role="estimate"]');
+			if (estimateEl) {
+				estimateEl.textContent = `Est ${task.estimated_label || formatEstimated(task.estimated_time)}`;
+			}
+
+			const impBar = card.querySelector('.taskm-importance-bar');
+			if (impBar) {
+				for (let i = 1; i <= 5; i += 1) {
+					impBar.classList.remove(`imp-${i}`);
+				}
+				impBar.classList.add(`imp-${toNumber(task.importance, 3)}`);
+			}
+
+			const startBtn = card.querySelector('.taskm-btn-start');
+			const completeBtn = card.querySelector('.taskm-btn-complete');
+			if (startBtn) startBtn.classList.toggle('is-hidden', task.status !== 'pending');
+			if (completeBtn) completeBtn.classList.toggle('is-hidden', task.status === 'completed');
+
+			const form = card.querySelector('[data-edit-form]');
+			if (form) {
+				const titleInput = form.querySelector('input[name="title"]');
+				const descInput = form.querySelector('textarea[name="description"]');
+				const estInput = form.querySelector('input[name="estimated_time"]');
+				const impSelect = form.querySelector('select[name="importance"]');
+				const deadlineInput = form.querySelector('input[name="deadline"]');
+
+				if (titleInput) titleInput.value = task.title || '';
+				if (descInput) descInput.value = task.description || '';
+				if (estInput) estInput.value = task.estimated_time || '';
+				if (impSelect) impSelect.value = String(toNumber(task.importance, 3));
+				if (deadlineInput) deadlineInput.value = task.deadline_input || '';
+			}
+		};
+
+		filterPills.forEach((pill) => {
+			pill.addEventListener('click', () => {
+				const group = pill.getAttribute('data-filter-group');
+				const value = pill.getAttribute('data-filter-value');
+				if (!group || !value) return;
+
+				filterPills
+					.filter((candidate) => candidate.getAttribute('data-filter-group') === group)
+					.forEach((candidate) => candidate.classList.remove('is-active'));
+
+				pill.classList.add('is-active');
+				filterState[group] = value;
+				applyFiltersAndSort();
+			});
+		});
+
+		if (searchInput) {
+			searchInput.addEventListener('input', () => {
+				filterState.query = (searchInput.value || '').trim().toLowerCase();
+				applyFiltersAndSort();
+			});
+		}
+
+		if (sortBy) {
+			sortBy.addEventListener('change', applyFiltersAndSort);
+		}
+
+		if (sortDirBtn) {
+			sortDirBtn.addEventListener('click', () => {
+				const current = sortDirBtn.getAttribute('data-direction') || 'asc';
+				const next = current === 'asc' ? 'desc' : 'asc';
+				sortDirBtn.setAttribute('data-direction', next);
+				sortDirBtn.textContent = next.toUpperCase();
+				applyFiltersAndSort();
+			});
+		}
+
+		if (selectAll) {
+			selectAll.addEventListener('change', () => {
+				const visibleCards = cards.filter((card) => !card.hidden);
+				visibleCards.forEach((card) => {
+					const check = card.querySelector('.taskm-check');
+					if (check) check.checked = selectAll.checked;
+				});
+				updateBulkBar();
+			});
+		}
+
+		if (tasksList) {
+			tasksList.addEventListener('change', (e) => {
+				if (e.target && e.target.classList.contains('taskm-check')) {
+					updateBulkBar();
+				}
+			});
+
+			tasksList.addEventListener('click', async (e) => {
+				const actionBtn = e.target.closest('[data-task-action]');
+				if (actionBtn) {
+					const card = actionBtn.closest('.taskm-card');
+					if (!card) return;
+
+					const action = actionBtn.getAttribute('data-task-action');
+					const taskId = card.getAttribute('data-task-id');
+					if (!taskId) return;
+
+					if (action === 'delete') {
+						const msg = actionBtn.getAttribute('data-confirm') || 'Delete this task permanently?';
+						if (!window.confirm(msg)) return;
+					}
+
+					const actionMap = {
+						start: 'start_task',
+						complete: 'complete_task',
+						delete: 'delete_task',
+					};
+					const payloadAction = actionMap[action];
+					if (!payloadAction) return;
+
+					const fd = new FormData();
+					fd.set('action', payloadAction);
+					fd.set('task_id', taskId);
+					fd.set('csrf_token', csrfToken);
+
+					try {
+						const data = await sendTaskRequest(fd);
+						if (action === 'delete') {
+							card.remove();
+							cards = cards.filter((item) => item !== card);
+							toast('Task deleted.', 'warning', 'Tasks');
+						} else if (data.task) {
+							applyTaskToCard(card, data.task);
+							toast(action === 'start' ? 'Task started.' : 'Task completed.', 'success', 'Tasks');
+						}
+						applyFiltersAndSort();
+					} catch (err) {
+						toast(err.message || 'Action failed', 'danger', 'Tasks');
+					}
+					return;
+				}
+
+				const editToggle = e.target.closest('[data-open-edit]');
+				if (editToggle) {
+					const card = editToggle.closest('.taskm-card');
+					if (!card) return;
+					const panel = card.querySelector('[data-edit-panel]');
+					if (!panel) return;
+					panel.hidden = !panel.hidden;
+					return;
+				}
+
+				const cancelEdit = e.target.closest('[data-cancel-edit]');
+				if (cancelEdit) {
+					const card = cancelEdit.closest('.taskm-card');
+					if (!card) return;
+					const panel = card.querySelector('[data-edit-panel]');
+					if (panel) panel.hidden = true;
+				}
+			});
+
+			tasksList.addEventListener('submit', async (e) => {
+				const form = e.target.closest('[data-edit-form]');
+				if (!form) return;
+				e.preventDefault();
+
+				const card = form.closest('.taskm-card');
+				if (!card) return;
+
+				const fd = new FormData(form);
+				fd.set('action', 'edit_task');
+				fd.set('task_id', card.getAttribute('data-task-id') || '');
+
+				try {
+					const data = await sendTaskRequest(fd);
+					if (data.task) {
+						applyTaskToCard(card, data.task);
+						const panel = card.querySelector('[data-edit-panel]');
+						if (panel) panel.hidden = true;
+						toast('Task updated.', 'success', 'Tasks');
+						applyFiltersAndSort();
+					}
+				} catch (err) {
+					toast(err.message || 'Could not save task', 'danger', 'Tasks');
+				}
+			});
+		}
+
+		if (bulkCompleteBtn) {
+			bulkCompleteBtn.addEventListener('click', async () => {
+				const selected = getSelectedCards();
+				if (selected.length === 0) return;
+
+				const fd = new FormData();
+				fd.set('action', 'bulk_complete');
+				fd.set('csrf_token', csrfToken);
+				selected.forEach((card) => fd.append('task_ids', card.getAttribute('data-task-id') || ''));
+
+				try {
+					const data = await sendTaskRequest(fd);
+					const updates = Array.isArray(data.updated_tasks) ? data.updated_tasks : [];
+					updates.forEach((task) => {
+						const card = tasksList.querySelector(`.taskm-card[data-task-id="${task.id}"]`);
+						if (card) {
+							const check = card.querySelector('.taskm-check');
+							if (check) check.checked = false;
+							applyTaskToCard(card, task);
+						}
+					});
+					toast('Selected tasks marked complete.', 'success', 'Tasks');
+					applyFiltersAndSort();
+				} catch (err) {
+					toast(err.message || 'Bulk complete failed', 'danger', 'Tasks');
+				}
+			});
+		}
+
+		if (bulkDeleteBtn) {
+			bulkDeleteBtn.addEventListener('click', async () => {
+				const selected = getSelectedCards();
+				if (selected.length === 0) return;
+				const msg = bulkDeleteBtn.getAttribute('data-confirm') || 'Delete selected tasks?';
+				if (!window.confirm(msg)) return;
+
+				const fd = new FormData();
+				fd.set('action', 'bulk_delete');
+				fd.set('csrf_token', csrfToken);
+				selected.forEach((card) => fd.append('task_ids', card.getAttribute('data-task-id') || ''));
+
+				try {
+					const data = await sendTaskRequest(fd);
+					const deletedIds = new Set((data.deleted_ids || []).map((id) => String(id)));
+					cards = cards.filter((card) => {
+						const keep = !deletedIds.has(card.getAttribute('data-task-id') || '');
+						if (!keep) card.remove();
+						return keep;
+					});
+					toast('Selected tasks deleted.', 'warning', 'Tasks');
+					applyFiltersAndSort();
+				} catch (err) {
+					toast(err.message || 'Bulk delete failed', 'danger', 'Tasks');
+				}
+			});
+		}
+
+		applyFiltersAndSort();
+	}
+
 	// Analytics insight dashboard
 	const analyticsRoot = document.getElementById('analyticsDashboard');
 	const analyticsBootNode = document.getElementById('analytics-dashboard-boot');
