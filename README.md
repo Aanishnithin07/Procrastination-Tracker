@@ -17,13 +17,6 @@ Live-ready: deploy on GitHub Pages or Netlify in minutes.
 - HTML, CSS (Tailwind via CDN), vanilla JavaScript
 - Chart.js (CDN)
 - No build step required
-\\\
-```
-Or using npm script:
-```bash
-cd "/Users/aanishnithin/Procrastination Tracker/procrasti-track"
-npm run preview
-```
 
 ## Usage
 1) Enter “What should you be doing?” and (optionally) minutes.
