@@ -5,109 +5,295 @@
 {% block page_subtitle %}Turn patterns into momentum.{% endblock %}
 
 {% block content %}
-  <div class="stack">
-    <div class="stats">
-      <div class="stat">
-        <div class="k">{{ completion_rate }}%</div>
-        <div class="t">Completion rate</div>
-      </div>
-      <div class="stat">
-        <div class="k">{{ total_tasks }}</div>
-        <div class="t">Total tasks</div>
-      </div>
-      <div class="stat">
-        <div class="k">{{ today_logs }}</div>
-        <div class="t">Logs today</div>
-      </div>
-    </div>
-
-    <section class="panel">
-      <div class="panel-header">
-        <div>
-          <div class="panel-title">Active tasks</div>
-          <div class="help">Top 10 tasks by urgency and importance.</div>
-        </div>
-        <div class="d-flex gap-2">
-          <a class="btnx" href="/log_procrastination">Log</a>
-          <a class="btnx btnx-primary" href="/add_task">Add</a>
-        </div>
-      </div>
-
+  <div class="cc" id="commandCenter"
+       data-csrf="{{ csrf_token() }}"
+       data-quote-start="{{ quote_start_index }}">
+    <section class="panel cc-hero">
       <div class="panel-body">
-        {% if tasks %}
-          {% for task in tasks %}
-            <div class="task">
-              <div class="task-top">
-                <div>
-                  <div class="task-title">{{ task.title }}</div>
-                  {% if task.description %}
-                    <div class="muted" style="margin-top: 6px;">{{ task.description }}</div>
-                  {% endif %}
-                  <div class="meta" style="margin-top: 10px;">
-                    <span class="badge dot {% if task.urgency == 'overdue' %}danger{% elif task.urgency == 'due_soon' %}warning{% else %}info{% endif %}">
-                      {% if task.urgency == 'overdue' %}Overdue{% elif task.urgency == 'due_soon' %}Due soon{% else %}On track{% endif %}
-                    </span>
-                    <span class="badge">Importance {{ task.importance or '—' }}/5</span>
-                    <span class="badge">Est {{ task.estimated_time|format_time }}</span>
-                    <span class="badge">Deadline {% if task.deadline %}{{ task.deadline }}{% else %}—{% endif %}</span>
-                  </div>
-                </div>
-
-                <div class="d-flex flex-wrap gap-2 justify-content-end">
-                  {% if task.status == 'pending' %}
-                    <form method="post" action="/start_task/{{ task.id }}">
-                      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                      <button class="btnx" type="submit">Start</button>
-                    </form>
-                  {% endif %}
-
-                  <form method="post" action="/complete_task/{{ task.id }}">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <button class="btnx btnx-primary" type="submit">Complete</button>
-                  </form>
-
-                  <form method="post" action="/abandon_task/{{ task.id }}">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <button class="btnx btnx-warning" type="submit" data-confirm="Mark this task as abandoned?">Abandon</button>
-                  </form>
-
-                  <form method="post" action="/delete_task/{{ task.id }}">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <button class="btnx btnx-danger" type="submit" data-confirm="Delete this task permanently?">Delete</button>
-                  </form>
-                </div>
-              </div>
+        <div class="cc-hero-row">
+          <div>
+            <div class="h1">{{ greeting }}, {{ first_name }}.</div>
+            <div class="subtle" style="margin-top: 6px;">Today’s mission: keep the loop tight — plan → act → log → learn.</div>
+            <div class="cc-hero-badges" style="margin-top: 14px;">
+              <span class="pill" title="Your current activity streak">
+                <span>Streak</span>
+                <strong>{{ current_streak }}d</strong>
+              </span>
+              <span class="pill" title="0–100 based on tasks completed vs procrastination logs">
+                <span>Focus score</span>
+                <strong>{{ today_focus_score }}</strong>
+              </span>
             </div>
-          {% endfor %}
-        {% else %}
-          <div class="muted">No active tasks yet. Add one and start tracking.</div>
-        {% endif %}
+          </div>
+
+          <div class="cc-hero-actions">
+            <a class="btnx" href="/log_procrastination">Log pulse</a>
+            <button class="btnx btnx-primary" type="button" id="openQuickAdd">Quick add</button>
+          </div>
+        </div>
       </div>
     </section>
 
-    {% if top_triggers %}
-      <section class="panel">
+    <div class="stats cc-stats">
+      <div class="stat">
+        <div class="k">{{ tasks_done_today }}</div>
+        <div class="t">Tasks Done Today</div>
+      </div>
+      <div class="stat">
+        <div class="k">{{ current_streak }}d</div>
+        <div class="t">Current Streak</div>
+      </div>
+      <div class="stat">
+        <div class="k">{{ avg_focus_score }}</div>
+        <div class="t">Avg Focus Score (7-day)</div>
+      </div>
+      <div class="stat">
+        <div class="k">{{ procrastination_free_hours }}h</div>
+        <div class="t">Procrastination-Free Hours</div>
+      </div>
+    </div>
+
+    <div class="cc-grid">
+      <section class="panel cc-board" aria-label="Task board">
         <div class="panel-header">
           <div>
-            <div class="panel-title">Top triggers</div>
-            <div class="help">Most common triggers in the last 7 days.</div>
+            <div class="panel-title">Task board</div>
+            <div class="help">Drag cards across columns. Reordering saves automatically.</div>
+          </div>
+          <div class="d-flex gap-2">
+            <a class="btnx" href="/add_task">Full editor</a>
           </div>
         </div>
+
         <div class="panel-body">
-          <div class="row g-3">
-            {% for trig in top_triggers %}
-              <div class="col-md-4">
-                <div class="panel" style="box-shadow: none;">
-                  <div class="panel-body">
-                    <div class="h2" style="font-size: var(--fs-18);">{{ trig.trigger_reason }}</div>
-                    <div class="muted" style="margin-top: 4px;">{{ trig.count }} times</div>
-                  </div>
-                </div>
+          <div class="kanban" id="kanban" aria-label="Kanban board">
+            <div class="kanban-col" data-status="pending">
+              <div class="kanban-head">
+                <div class="kanban-title">Pending</div>
+                <div class="badge">{{ task_board['pending']|length }}</div>
               </div>
-            {% endfor %}
+              <div class="kanban-drop" data-dropzone="pending" aria-label="Pending tasks">
+                {% for task in task_board['pending'] %}
+                  <article class="kcard" draggable="true" data-task-id="{{ task.id }}" data-status="pending" aria-label="Task card">
+                    <div class="kcard-top">
+                      <div class="kcard-title">{{ task.title }}</div>
+                      <div class="kcard-dots" title="Importance">
+                        {% for i in range(1, 6) %}
+                          <span class="dot {% if i <= task.importance %}is-on{% endif %}"></span>
+                        {% endfor %}
+                      </div>
+                    </div>
+                    {% if task.description %}
+                      <div class="kcard-desc">{{ task.description }}</div>
+                    {% endif %}
+                    <div class="kcard-meta">
+                      <span class="badge dot {% if task.deadline_state == 'overdue' %}danger{% elif task.deadline_state == 'soon' %}warning{% else %}info{% endif %}">{{ task.deadline_countdown }}</span>
+                      <span class="badge">Est {{ task.estimated_time|format_time }}</span>
+                    </div>
+                    <div class="kcard-actions">
+                      <form method="post" action="/start_task/{{ task.id }}" data-inline-action>
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button class="btnx" type="submit">Start</button>
+                      </form>
+                      <form method="post" action="/complete_task/{{ task.id }}" data-inline-action>
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button class="btnx btnx-primary" type="submit">Done</button>
+                      </form>
+                      <form method="post" action="/delete_task/{{ task.id }}" data-inline-action>
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button class="btnx btnx-danger" type="submit" data-confirm="Delete this task permanently?">✕</button>
+                      </form>
+                    </div>
+                  </article>
+                {% endfor %}
+              </div>
+            </div>
+
+            <div class="kanban-col" data-status="in_progress">
+              <div class="kanban-head">
+                <div class="kanban-title">In Progress</div>
+                <div class="badge">{{ task_board['in_progress']|length }}</div>
+              </div>
+              <div class="kanban-drop" data-dropzone="in_progress" aria-label="In progress tasks">
+                {% for task in task_board['in_progress'] %}
+                  <article class="kcard" draggable="true" data-task-id="{{ task.id }}" data-status="in_progress" aria-label="Task card">
+                    <div class="kcard-top">
+                      <div class="kcard-title">{{ task.title }}</div>
+                      <div class="kcard-dots" title="Importance">
+                        {% for i in range(1, 6) %}
+                          <span class="dot {% if i <= task.importance %}is-on{% endif %}"></span>
+                        {% endfor %}
+                      </div>
+                    </div>
+                    {% if task.description %}
+                      <div class="kcard-desc">{{ task.description }}</div>
+                    {% endif %}
+                    <div class="kcard-meta">
+                      <span class="badge dot {% if task.deadline_state == 'overdue' %}danger{% elif task.deadline_state == 'soon' %}warning{% else %}info{% endif %}">{{ task.deadline_countdown }}</span>
+                      <span class="badge">Est {{ task.estimated_time|format_time }}</span>
+                    </div>
+                    <div class="kcard-actions">
+                      <form method="post" action="/complete_task/{{ task.id }}" data-inline-action>
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button class="btnx btnx-primary" type="submit">Done</button>
+                      </form>
+                      <form method="post" action="/abandon_task/{{ task.id }}" data-inline-action>
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button class="btnx btnx-warning" type="submit" data-confirm="Mark this task as abandoned?">Abandon</button>
+                      </form>
+                      <form method="post" action="/delete_task/{{ task.id }}" data-inline-action>
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button class="btnx btnx-danger" type="submit" data-confirm="Delete this task permanently?">✕</button>
+                      </form>
+                    </div>
+                  </article>
+                {% endfor %}
+              </div>
+            </div>
+
+            <div class="kanban-col" data-status="completed">
+              <div class="kanban-head">
+                <div class="kanban-title">Done</div>
+                <div class="badge">{{ task_board['completed']|length }}</div>
+              </div>
+              <div class="kanban-drop" data-dropzone="completed" aria-label="Done tasks">
+                {% for task in task_board['completed'] %}
+                  <article class="kcard is-done" draggable="true" data-task-id="{{ task.id }}" data-status="completed" aria-label="Task card">
+                    <div class="kcard-top">
+                      <div class="kcard-title">{{ task.title }}</div>
+                      <div class="kcard-dots" title="Importance">
+                        {% for i in range(1, 6) %}
+                          <span class="dot {% if i <= task.importance %}is-on{% endif %}"></span>
+                        {% endfor %}
+                      </div>
+                    </div>
+                    <div class="kcard-meta">
+                      <span class="badge dot success">Completed</span>
+                      <span class="badge">Est {{ task.estimated_time|format_time }}</span>
+                    </div>
+                    <div class="kcard-actions">
+                      <form method="post" action="/reopen_task/{{ task.id }}" data-inline-action>
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button class="btnx" type="submit">Reopen</button>
+                      </form>
+                      <form method="post" action="/delete_task/{{ task.id }}" data-inline-action>
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button class="btnx btnx-danger" type="submit" data-confirm="Delete this task permanently?">✕</button>
+                      </form>
+                    </div>
+                  </article>
+                {% endfor %}
+              </div>
+            </div>
           </div>
         </div>
       </section>
-    {% endif %}
+
+      <aside class="panel cc-side" aria-label="Procrastination pulse">
+        <div class="panel-header">
+          <div>
+            <div class="panel-title">Procrastination pulse</div>
+            <div class="help">Last 3 logs — mood + energy + time.</div>
+          </div>
+        </div>
+        <div class="panel-body">
+          {% if recent_pulse_logs %}
+            <div class="pulse-list">
+              {% for log in recent_pulse_logs %}
+                <div class="pulse-item">
+                  <div class="pulse-top">
+                    <div class="pulse-mood">
+                      <span class="pulse-emoji">{{ log.mood|get_mood_emoji }}</span>
+                      <span class="muted">{{ (log.mood or 'unknown')|capitalize }}</span>
+                    </div>
+                    <div class="subtle">{{ log.timestamp_label }}</div>
+                  </div>
+                  <div class="pulse-energy" aria-label="Energy level">
+                    <div class="pulse-bar" style="width: {{ log.energy_percent }}%"></div>
+                  </div>
+                  <div class="help">Energy {{ log.energy_level }}/10</div>
+                </div>
+              {% endfor %}
+            </div>
+          {% else %}
+            <div class="muted">No logs yet. Log a pulse to see patterns.</div>
+          {% endif %}
+        </div>
+      </aside>
+    </div>
+
+    <section class="panel cc-quote" aria-label="Motivational quote">
+      <div class="panel-body">
+        <div class="subtle">Motivation</div>
+        <div class="quote" id="quoteText">—</div>
+        <div class="help" id="quoteAuthor"></div>
+      </div>
+    </section>
+
+    <button class="fab" id="fabQuickAdd" type="button" aria-label="Quick add task">+</button>
+
+    <div class="modalx" id="quickAddModal" aria-hidden="true" role="dialog" aria-modal="true">
+      <div class="modalx-backdrop" data-close-modal></div>
+      <div class="modalx-panel" role="document">
+        <div class="rowx" style="margin-bottom: 10px;">
+          <div>
+            <div class="panel-title">Quick add task</div>
+            <div class="help">Create a task without leaving your dashboard.</div>
+          </div>
+          <button class="btnx btnx-ghost" type="button" data-close-modal aria-label="Close">✕</button>
+        </div>
+        <form id="quickAddForm">
+          <div class="stack" style="gap: var(--space-3);">
+            <div class="field">
+              <div class="label">Title</div>
+              <input class="input" name="title" placeholder="e.g., Draft internship outreach email" required>
+            </div>
+            <div class="field">
+              <div class="label">Description</div>
+              <textarea class="textarea" name="description" placeholder="Optional"></textarea>
+            </div>
+            <div class="row g-3">
+              <div class="col-md-4">
+                <div class="field">
+                  <div class="label">Importance (1–5)</div>
+                  <select class="select" name="importance">
+                    <option value="1">1</option>
+                    <option value="2">2</option>
+                    <option value="3" selected>3</option>
+                    <option value="4">4</option>
+                    <option value="5">5</option>
+                  </select>
+                </div>
+              </div>
+              <div class="col-md-4">
+                <div class="field">
+                  <div class="label">Est minutes</div>
+                  <input class="input" name="estimated_time" inputmode="numeric" placeholder="45">
+                </div>
+              </div>
+              <div class="col-md-4">
+                <div class="field">
+                  <div class="label">Deadline</div>
+                  <input class="input" name="deadline" type="datetime-local">
+                </div>
+              </div>
+            </div>
+            <div class="d-flex gap-2 justify-content-end">
+              <button class="btnx" type="button" data-close-modal>Cancel</button>
+              <button class="btnx btnx-primary" type="submit">Create</button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
   </div>
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    window.PROCRASTINATION_DASHBOARD = {
+      quotes: {{ productivity_quotes|tojson }},
+      quoteStart: {{ quote_start_index }},
+    };
+  </script>
 {% endblock %}

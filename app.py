@@ -1,9 +1,9 @@
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from cs50 import SQL
-from flask import Flask, flash, redirect, render_template, request, session
+from flask import Flask, flash, jsonify, redirect, render_template, request, session
 from flask_session import Session
 from werkzeug.security import check_password_hash, generate_password_hash
 
@@ -39,6 +39,90 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
 logger = logging.getLogger("procrastination")
+
+
+PRODUCTIVITY_QUOTES = [
+    {
+        "text": "Start with the next smallest step. Momentum is built, not found.",
+        "author": "ProcrastiNation",
+    },
+    {
+        "text": "A focused hour today is worth a perfect plan tomorrow.",
+        "author": "ProcrastiNation",
+    },
+    {
+        "text": "Clarity comes from action, not endless analysis.",
+        "author": "ProcrastiNation",
+    },
+    {
+        "text": "When in doubt, reduce the task size and begin.",
+        "author": "ProcrastiNation",
+    },
+    {
+        "text": "Discipline is remembering what you want most.",
+        "author": "ProcrastiNation",
+    },
+    {
+        "text": "You do not need motivation to start; starting creates motivation.",
+        "author": "ProcrastiNation",
+    },
+    {
+        "text": "Done is a daily habit, not a one-time event.",
+        "author": "ProcrastiNation",
+    },
+    {
+        "text": "Protect your peak hours like your most valuable asset.",
+        "author": "ProcrastiNation",
+    },
+    {
+        "text": "Small wins compound into serious confidence.",
+        "author": "ProcrastiNation",
+    },
+    {
+        "text": "Choose progress over pressure.",
+        "author": "ProcrastiNation",
+    },
+    {
+        "text": "Complex goals are completed one focused block at a time.",
+        "author": "ProcrastiNation",
+    },
+    {
+        "text": "Your calendar reveals your priorities more than your intentions.",
+        "author": "ProcrastiNation",
+    },
+    {
+        "text": "Perfection delays. Consistency delivers.",
+        "author": "ProcrastiNation",
+    },
+    {
+        "text": "Attention is finite. Spend it on what moves the needle.",
+        "author": "ProcrastiNation",
+    },
+    {
+        "text": "If it matters, schedule it before distractions do.",
+        "author": "ProcrastiNation",
+    },
+    {
+        "text": "A clear finish line turns effort into results.",
+        "author": "ProcrastiNation",
+    },
+    {
+        "text": "Focus is saying no to the noise.",
+        "author": "ProcrastiNation",
+    },
+    {
+        "text": "The fastest way forward is often the simplest next action.",
+        "author": "ProcrastiNation",
+    },
+    {
+        "text": "Energy management is time management with better outcomes.",
+        "author": "ProcrastiNation",
+    },
+    {
+        "text": "Keep promises to your future self in 25-minute increments.",
+        "author": "ProcrastiNation",
+    },
+]
 
 
 def _get_user_initials(username: str) -> str:
@@ -86,6 +170,81 @@ def _activity_streak_days(user_id: int) -> int:
     return streak
 
 
+def _time_of_day_greeting(now: datetime) -> str:
+    if now.hour < 12:
+        return "Good morning"
+    if now.hour < 18:
+        return "Good afternoon"
+    return "Good evening"
+
+
+def _first_name(username: str) -> str:
+    if not username:
+        return "there"
+    parts = [p for p in username.replace("_", " ").split(" ") if p]
+    if not parts:
+        return "there"
+    return parts[0].capitalize()
+
+
+def _parse_sqlite_datetime(value):
+    if not value:
+        return None
+    raw = str(value)
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S.%f"):
+        try:
+            return datetime.strptime(raw, fmt)
+        except ValueError:
+            continue
+    try:
+        return datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+
+
+def _deadline_countdown(deadline_raw):
+    deadline_dt = _parse_sqlite_datetime(deadline_raw)
+    if not deadline_dt:
+        return "No deadline", "none"
+
+    delta = deadline_dt - datetime.utcnow()
+    total_seconds = int(delta.total_seconds())
+    abs_seconds = abs(total_seconds)
+
+    if total_seconds < 0:
+        if abs_seconds < 3600:
+            return f"Overdue by {max(1, abs_seconds // 60)}m", "overdue"
+        if abs_seconds < 86400:
+            return f"Overdue by {abs_seconds // 3600}h", "overdue"
+        return f"Overdue by {abs_seconds // 86400}d", "overdue"
+
+    if total_seconds < 3600:
+        return f"Due in {max(1, total_seconds // 60)}m", "soon"
+    if total_seconds < 86400:
+        return f"Due in {total_seconds // 3600}h", "soon"
+    return f"Due in {total_seconds // 86400}d", "normal"
+
+
+def _calculate_focus_score(tasks_completed: int, procrastination_count: int) -> int:
+    total_events = tasks_completed + procrastination_count
+    if total_events <= 0:
+        return 0
+    return int(round((tasks_completed / total_events) * 100))
+
+
+def _next_board_order(user_id: int, status: str) -> int:
+    row = db.execute(
+        """
+        SELECT COALESCE(MAX(board_order), 0) AS max_order
+        FROM tasks
+        WHERE user_id = ? AND status = ?
+        """,
+        user_id,
+        status,
+    )
+    return int(row[0]["max_order"]) + 1
+
+
 @app.context_processor
 def inject_shell_context():
     user = None
@@ -127,6 +286,8 @@ def generate_csrf_token():
 def csrf_protect():
     if request.method == "POST":
         sent = request.form.get("csrf_token")
+        if not sent:
+            sent = request.headers.get("X-CSRF-Token")
         expected = session.get("_csrf_token")
         if not sent or not expected or sent != expected:
             return apology("invalid or missing CSRF token", 400)
@@ -160,10 +321,33 @@ with app.app_context():
             importance INTEGER CHECK (importance IN (1, 2, 3, 4, 5)),
             deadline DATETIME,
             status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'in_progress', 'completed', 'abandoned')),
+            board_order INTEGER DEFAULT 0,
+            completed_at DATETIME,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (user_id) REFERENCES users (id)
         )
     """)
+
+    task_columns = {col["name"] for col in db.execute("SELECT name FROM pragma_table_info('tasks')")}
+    if "board_order" not in task_columns:
+        db.execute("ALTER TABLE tasks ADD COLUMN board_order INTEGER DEFAULT 0")
+    if "completed_at" not in task_columns:
+        db.execute("ALTER TABLE tasks ADD COLUMN completed_at DATETIME")
+
+    db.execute(
+        """
+        UPDATE tasks
+        SET board_order = id
+        WHERE board_order IS NULL OR board_order = 0
+        """
+    )
+    db.execute(
+        """
+        UPDATE tasks
+        SET completed_at = created_at
+        WHERE status = 'completed' AND completed_at IS NULL
+        """
+    )
     
     # Work sessions table
     db.execute("""
@@ -221,71 +405,220 @@ def server_error(_e):
 @app.route("/")
 @login_required
 def index():
-    """Show dashboard with current tasks and insights"""
+    """Show command-center dashboard with productivity insights."""
     user_id = session["user_id"]
-    
-    # Get active tasks
-    tasks = db.execute("""
-        SELECT *, 
-               CASE 
-                   WHEN deadline < datetime('now') THEN 'overdue'
-                   WHEN deadline < datetime('now', '+1 day') THEN 'due_soon'
-                   ELSE 'normal'
-               END as urgency
-        FROM tasks 
-        WHERE user_id = ? AND status IN ('pending', 'in_progress')
-        ORDER BY 
-            CASE 
-                WHEN deadline < datetime('now') THEN 1
-                WHEN deadline < datetime('now', '+1 day') THEN 2
-                ELSE 3
+
+    now = datetime.now()
+    username = session.get("username") or ""
+    greeting = _time_of_day_greeting(now)
+    first_name = _first_name(username)
+    current_streak = _activity_streak_days(user_id)
+
+    tasks = db.execute(
+        """
+        SELECT id, title, description, estimated_time, importance, deadline, status, board_order
+        FROM tasks
+        WHERE user_id = ? AND status IN ('pending', 'in_progress', 'completed')
+        ORDER BY
+            CASE status
+                WHEN 'pending' THEN 1
+                WHEN 'in_progress' THEN 2
+                WHEN 'completed' THEN 3
+                ELSE 4
             END,
-            importance DESC,
-            deadline ASC
-        LIMIT 10
-    """, user_id)
-    
-    # Get today's procrastination count
-    today_logs = db.execute("""
-        SELECT COUNT(*) as count 
-        FROM procrastination_logs 
+            CASE WHEN board_order IS NULL OR board_order = 0 THEN 99999 ELSE board_order END,
+            id DESC
+        """,
+        user_id,
+    )
+
+    task_board = {
+        "pending": [],
+        "in_progress": [],
+        "completed": [],
+    }
+    for task in tasks:
+        task["importance"] = int(task.get("importance") or 0)
+        task["deadline_countdown"], task["deadline_state"] = _deadline_countdown(task.get("deadline"))
+        task_board[task["status"]].append(task)
+
+    tasks_done_today = db.execute(
+        """
+        SELECT COUNT(*) AS count
+        FROM tasks
+        WHERE user_id = ?
+          AND status = 'completed'
+          AND date(COALESCE(completed_at, created_at)) = date('now')
+        """,
+        user_id,
+    )[0]["count"]
+
+    today_logs = db.execute(
+        """
+        SELECT COUNT(*) AS count
+        FROM procrastination_logs
         WHERE user_id = ? AND date(timestamp) = date('now')
-    """, user_id)[0]["count"]
-    
-    # Get week's procrastination pattern
-    week_pattern = db.execute("""
-        SELECT 
-            strftime('%w', timestamp) as day_of_week,
-            COUNT(*) as count
-        FROM procrastination_logs 
-        WHERE user_id = ? AND timestamp >= datetime('now', '-7 days')
-        GROUP BY strftime('%w', timestamp)
-        ORDER BY day_of_week
-    """, user_id)
-    
-    # Get most common triggers this week
-    top_triggers = db.execute("""
-        SELECT trigger_reason, COUNT(*) as count
-        FROM procrastination_logs 
-        WHERE user_id = ? AND timestamp >= datetime('now', '-7 days')
-            AND trigger_reason IS NOT NULL
-        GROUP BY trigger_reason
-        ORDER BY count DESC
+        """,
+        user_id,
+    )[0]["count"]
+
+    today_focus_score = _calculate_focus_score(tasks_done_today, today_logs)
+
+    completion_rows = db.execute(
+        """
+        SELECT date(COALESCE(completed_at, created_at)) AS day, COUNT(*) AS count
+        FROM tasks
+        WHERE user_id = ?
+          AND status = 'completed'
+          AND date(COALESCE(completed_at, created_at)) >= date('now', '-6 days')
+        GROUP BY day
+        """,
+        user_id,
+    )
+    logs_rows = db.execute(
+        """
+        SELECT date(timestamp) AS day, COUNT(*) AS count
+        FROM procrastination_logs
+        WHERE user_id = ?
+          AND date(timestamp) >= date('now', '-6 days')
+        GROUP BY day
+        """,
+        user_id,
+    )
+    completions_by_day = {row["day"]: int(row["count"]) for row in completion_rows}
+    logs_by_day = {row["day"]: int(row["count"]) for row in logs_rows}
+
+    focus_scores = []
+    today_utc = datetime.utcnow().date()
+    for i in range(7):
+        day_key = (today_utc - timedelta(days=i)).isoformat()
+        focus_scores.append(
+            _calculate_focus_score(
+                completions_by_day.get(day_key, 0),
+                logs_by_day.get(day_key, 0),
+            )
+        )
+    avg_focus_score = round(sum(focus_scores) / len(focus_scores), 1)
+
+    noisy_hours = db.execute(
+        """
+        SELECT COUNT(DISTINCT strftime('%Y-%m-%d %H', timestamp)) AS noisy_hours
+        FROM procrastination_logs
+        WHERE user_id = ?
+          AND timestamp >= datetime('now', '-24 hours')
+        """,
+        user_id,
+    )[0]["noisy_hours"]
+    procrastination_free_hours = max(0, 24 - int(noisy_hours or 0))
+
+    recent_pulse_logs = db.execute(
+        """
+        SELECT mood, energy_level, timestamp
+        FROM procrastination_logs
+        WHERE user_id = ?
+        ORDER BY timestamp DESC
         LIMIT 3
-    """, user_id)
-    
-    # Get productivity insights
-    total_tasks = db.execute("SELECT COUNT(*) as count FROM tasks WHERE user_id = ?", user_id)[0]["count"]
-    completed_tasks = db.execute("SELECT COUNT(*) as count FROM tasks WHERE user_id = ? AND status = 'completed'", user_id)[0]["count"]
-    completion_rate = round((completed_tasks / total_tasks * 100) if total_tasks > 0 else 0, 1)
-    
-    return render_template("index.html", 
-                         tasks=tasks, 
-                         today_logs=today_logs,
-                         week_pattern=week_pattern,
-                         top_triggers=top_triggers,
-                         completion_rate=completion_rate,
-                         total_tasks=total_tasks)
+        """,
+        user_id,
+    )
+    for log in recent_pulse_logs:
+        energy_level = int(log.get("energy_level") or 0)
+        energy_level = max(1, min(10, energy_level))
+        log["energy_level"] = energy_level
+        log["energy_percent"] = energy_level * 10
+        stamp = _parse_sqlite_datetime(log.get("timestamp"))
+        log["timestamp_label"] = stamp.strftime("%b %d, %I:%M %p") if stamp else "Unknown time"
+
+    quote_start_index = (now.timetuple().tm_yday + user_id) % len(PRODUCTIVITY_QUOTES)
+
+    return render_template(
+        "index.html",
+        greeting=greeting,
+        first_name=first_name,
+        current_streak=current_streak,
+        today_focus_score=today_focus_score,
+        tasks_done_today=tasks_done_today,
+        avg_focus_score=avg_focus_score,
+        procrastination_free_hours=procrastination_free_hours,
+        task_board=task_board,
+        recent_pulse_logs=recent_pulse_logs,
+        productivity_quotes=PRODUCTIVITY_QUOTES,
+        quote_start_index=quote_start_index,
+    )
+
+
+@app.route("/api/tasks/reorder", methods=["POST"])
+@login_required
+def reorder_tasks():
+    """Persist kanban column placement and ordering."""
+    payload = request.get_json(silent=True) or {}
+    columns = payload.get("columns")
+
+    if not isinstance(columns, dict):
+        return jsonify({"ok": False, "error": "Invalid payload"}), 400
+
+    allowed_statuses = ["pending", "in_progress", "completed"]
+    normalized = {}
+    all_task_ids = []
+
+    for status in allowed_statuses:
+        raw_ids = columns.get(status, [])
+        if not isinstance(raw_ids, list):
+            return jsonify({"ok": False, "error": "Invalid column list"}), 400
+
+        ids_for_status = []
+        for raw_id in raw_ids:
+            try:
+                task_id = int(raw_id)
+            except (TypeError, ValueError):
+                continue
+            if task_id > 0 and task_id not in ids_for_status:
+                ids_for_status.append(task_id)
+                all_task_ids.append(task_id)
+        normalized[status] = ids_for_status
+
+    if all_task_ids:
+        placeholders = ", ".join("?" for _ in all_task_ids)
+        owned_rows = db.execute(
+            f"SELECT id FROM tasks WHERE user_id = ? AND id IN ({placeholders})",
+            session["user_id"],
+            *all_task_ids,
+        )
+        owned_ids = {row["id"] for row in owned_rows}
+        if len(owned_ids) != len(set(all_task_ids)):
+            return jsonify({"ok": False, "error": "Task ownership mismatch"}), 403
+
+    for status in allowed_statuses:
+        for position, task_id in enumerate(normalized[status], start=1):
+            if status == "completed":
+                db.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'completed',
+                        board_order = ?,
+                        completed_at = COALESCE(completed_at, datetime('now'))
+                    WHERE id = ? AND user_id = ?
+                    """,
+                    position,
+                    task_id,
+                    session["user_id"],
+                )
+            else:
+                db.execute(
+                    """
+                    UPDATE tasks
+                    SET status = ?,
+                        board_order = ?,
+                        completed_at = NULL
+                    WHERE id = ? AND user_id = ?
+                    """,
+                    status,
+                    position,
+                    task_id,
+                    session["user_id"],
+                )
+
+    return jsonify({"ok": True})
 
 
 @app.route("/add_task", methods=["GET", "POST"])
@@ -326,11 +659,13 @@ def add_task():
             except ValueError:
                 return apology("invalid deadline format")
 
+        next_order = _next_board_order(session["user_id"], "pending")
+
         try:
             db.execute("""
-                INSERT INTO tasks (user_id, title, description, estimated_time, importance, deadline)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, session["user_id"], title, description, estimated_time, importance, deadline_formatted)
+                INSERT INTO tasks (user_id, title, description, estimated_time, importance, deadline, board_order)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, session["user_id"], title, description, estimated_time, importance, deadline_formatted, next_order)
         except Exception:
             logger.exception("Failed to insert task")
             return apology("could not add task", 500)
@@ -339,6 +674,96 @@ def add_task():
         return redirect("/")
     
     return render_template("add_task.html")
+
+
+@app.route("/api/tasks/quick_add", methods=["POST"])
+@login_required
+def quick_add_task():
+    """Create a task from dashboard inline modal without full navigation."""
+    payload = request.get_json(silent=True) or {}
+
+    title = (payload.get("title") or "").strip()
+    description = (payload.get("description") or "").strip() or None
+    estimated_time_raw = payload.get("estimated_time")
+    importance_raw = payload.get("importance")
+    deadline_raw = payload.get("deadline")
+
+    if not title:
+        return jsonify({"ok": False, "error": "Task title is required"}), 400
+
+    estimated_time = None
+    if estimated_time_raw not in (None, ""):
+        try:
+            estimated_time = int(estimated_time_raw)
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "Estimated time must be a number"}), 400
+        if estimated_time <= 0:
+            return jsonify({"ok": False, "error": "Estimated time must be positive"}), 400
+
+    try:
+        importance = int(importance_raw) if importance_raw not in (None, "") else 3
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Importance must be between 1 and 5"}), 400
+    if importance < 1 or importance > 5:
+        return jsonify({"ok": False, "error": "Importance must be between 1 and 5"}), 400
+
+    deadline_formatted = None
+    if deadline_raw:
+        try:
+            deadline_formatted = datetime.strptime(deadline_raw, "%Y-%m-%dT%H:%M")
+        except ValueError:
+            return jsonify({"ok": False, "error": "Invalid deadline format"}), 400
+
+    next_order = _next_board_order(session["user_id"], "pending")
+
+    try:
+        task_id = db.execute(
+            """
+            INSERT INTO tasks (user_id, title, description, estimated_time, importance, deadline, status, board_order)
+            VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
+            """,
+            session["user_id"],
+            title,
+            description,
+            estimated_time,
+            importance,
+            deadline_formatted,
+            next_order,
+        )
+    except Exception:
+        logger.exception("Failed to quick-add task")
+        return jsonify({"ok": False, "error": "Could not create task"}), 500
+
+    created = db.execute(
+        """
+        SELECT id, title, description, estimated_time, importance, deadline, status
+        FROM tasks
+        WHERE id = ? AND user_id = ?
+        """,
+        task_id,
+        session["user_id"],
+    )
+    if not created:
+        return jsonify({"ok": False, "error": "Task could not be loaded"}), 500
+
+    task = created[0]
+    countdown, deadline_state = _deadline_countdown(task.get("deadline"))
+
+    return jsonify(
+        {
+            "ok": True,
+            "task": {
+                "id": task["id"],
+                "title": task["title"],
+                "description": task.get("description") or "",
+                "estimated_time": task.get("estimated_time"),
+                "importance": int(task.get("importance") or 0),
+                "deadline_countdown": countdown,
+                "deadline_state": deadline_state,
+                "status": task["status"],
+            },
+        }
+    ), 201
 
 
 @app.route("/log_procrastination", methods=["GET", "POST"])
@@ -469,8 +894,19 @@ def healthz():
 def complete_task(task_id):
     """Mark a task as completed"""
     try:
-        db.execute("UPDATE tasks SET status = 'completed' WHERE id = ? AND user_id = ?", 
-                   task_id, session["user_id"])
+        next_order = _next_board_order(session["user_id"], "completed")
+        db.execute(
+            """
+            UPDATE tasks
+            SET status = 'completed',
+                board_order = ?,
+                completed_at = datetime('now')
+            WHERE id = ? AND user_id = ?
+            """,
+            next_order,
+            task_id,
+            session["user_id"],
+        )
     except Exception:
         logger.exception("Failed to complete task")
         return apology("could not update task", 500)
@@ -483,8 +919,19 @@ def complete_task(task_id):
 def start_task(task_id):
     """Mark a task as in progress."""
     try:
-        db.execute("UPDATE tasks SET status = 'in_progress' WHERE id = ? AND user_id = ?",
-                   task_id, session["user_id"])
+        next_order = _next_board_order(session["user_id"], "in_progress")
+        db.execute(
+            """
+            UPDATE tasks
+            SET status = 'in_progress',
+                board_order = ?,
+                completed_at = NULL
+            WHERE id = ? AND user_id = ?
+            """,
+            next_order,
+            task_id,
+            session["user_id"],
+        )
     except Exception:
         logger.exception("Failed to start task")
         return apology("could not update task", 500)
@@ -497,12 +944,46 @@ def start_task(task_id):
 def abandon_task(task_id):
     """Mark a task as abandoned."""
     try:
-        db.execute("UPDATE tasks SET status = 'abandoned' WHERE id = ? AND user_id = ?",
-                   task_id, session["user_id"])
+        db.execute(
+            """
+            UPDATE tasks
+            SET status = 'abandoned',
+                board_order = 0,
+                completed_at = NULL
+            WHERE id = ? AND user_id = ?
+            """,
+            task_id,
+            session["user_id"],
+        )
     except Exception:
         logger.exception("Failed to abandon task")
         return apology("could not update task", 500)
     flash("Task abandoned. No guilt — adjust and move on.")
+    return redirect("/")
+
+
+@app.route("/reopen_task/<int:task_id>", methods=["POST"])
+@login_required
+def reopen_task(task_id):
+    """Move a completed task back to pending."""
+    try:
+        next_order = _next_board_order(session["user_id"], "pending")
+        db.execute(
+            """
+            UPDATE tasks
+            SET status = 'pending',
+                board_order = ?,
+                completed_at = NULL
+            WHERE id = ? AND user_id = ?
+            """,
+            next_order,
+            task_id,
+            session["user_id"],
+        )
+    except Exception:
+        logger.exception("Failed to reopen task")
+        return apology("could not update task", 500)
+    flash("Task moved back to pending.")
     return redirect("/")
 
 
