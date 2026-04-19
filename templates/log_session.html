@@ -1,68 +1,77 @@
 {% extends "layout.html" %}
 
 {% block title %}Log procrastination · ProcrastiNation{% endblock %}
+{% block page_title %}Log{% endblock %}
+{% block page_subtitle %}Capture the moment. Spot the pattern.{% endblock %}
 
 {% block content %}
-	<div class="row">
-		<div class="col-lg-10 col-xl-8 mx-auto">
-			<div class="card">
-				<div class="card-header">Log a procrastination moment</div>
-				<div class="card-body">
-					<form method="post" action="/log_procrastination">
-						<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-						<input type="hidden" name="mood" id="moodInput" value="">
-
-						<div class="mb-3">
-							<label class="form-label">Related task (optional)</label>
-							<select class="form-select" name="task_id">
-								<option value="">No specific task</option>
-								{% for t in tasks %}
-									<option value="{{ t.id }}">{{ t.title }}</option>
-								{% endfor %}
-							</select>
-						</div>
-
-						<div class="mb-3">
-							<label class="form-label">Mood</label>
-							<div class="mood-grid" id="moodGrid">
-								{% for m in ['happy','anxious','tired','frustrated','focused','overwhelmed','bored','excited'] %}
-									<div class="mood-option" data-mood="{{ m }}">
-										<span class="mood-emoji">{{ m|get_mood_emoji }}</span>
-										<div style="font-weight: 600; text-transform: capitalize;">{{ m }}</div>
-									</div>
-								{% endfor %}
-							</div>
-							<div class="form-text">Pick the closest match.</div>
-						</div>
-
-						<div class="mb-3">
-							<label class="form-label">Energy level: <span id="energyValue">5</span>/10</label>
-							<input class="energy-slider" type="range" name="energy_level" id="energySlider" min="1" max="10" value="5" required>
-						</div>
-
-						<div class="row g-3">
-							<div class="col-md-6">
-								<label class="form-label">Environment (optional)</label>
-								<input class="form-control" name="environment" placeholder="e.g., library, bedroom, cafe">
-							</div>
-							<div class="col-md-6">
-								<label class="form-label">Trigger (optional)</label>
-								<input class="form-control" name="trigger_reason" placeholder="e.g., too hard, unclear, tired, distracted">
-							</div>
-						</div>
-
-						<div class="mb-3 mt-3">
-							<label class="form-label">What did you do instead? (optional)</label>
-							<textarea class="form-control" name="what_did_instead" rows="3" placeholder="Be honest — this is for patterns."></textarea>
-						</div>
-
-						<div class="d-flex justify-content-between">
-							<a class="btn btn-outline-primary" href="/">Cancel</a>
-							<button class="btn btn-warning" type="submit">Log it</button>
-						</div>
-					</form>
-				</div>
+	<section class="panel" style="max-width: 920px; margin: 0 auto;">
+		<div class="panel-header">
+			<div>
+				<div class="panel-title">Procrastination moment</div>
+				<div class="help">This is data, not judgment.</div>
 			</div>
 		</div>
-	</div>
+		<div class="panel-body">
+			<form method="post" action="/log_procrastination" class="stack">
+				<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+				<input type="hidden" name="mood" id="moodInput" value="">
+
+				<div class="field">
+					<div class="label">Related task</div>
+					<select class="select" name="task_id">
+						<option value="">No specific task</option>
+						{% for t in tasks %}
+							<option value="{{ t.id }}">{{ t.title }}</option>
+						{% endfor %}
+					</select>
+					<div class="help">Optional. Helps connect logs to a task.</div>
+				</div>
+
+				<div class="field">
+					<div class="label">Mood</div>
+					<div class="mood-grid" id="moodGrid">
+						{% for m in ['happy','anxious','tired','frustrated','focused','overwhelmed','bored','excited'] %}
+							<div class="mood-option" data-mood="{{ m }}">
+								<div class="rowx" style="justify-content: flex-start; gap: 10px;">
+									<span class="mood-emoji">{{ m|get_mood_emoji }}</span>
+									<div style="font-weight: 800; text-transform: capitalize;">{{ m }}</div>
+								</div>
+							</div>
+						{% endfor %}
+					</div>
+				</div>
+
+				<div class="field">
+					<div class="label">Energy level: <span id="energyValue">5</span>/10</div>
+					<input class="range" type="range" name="energy_level" id="energySlider" min="1" max="10" value="5" required>
+				</div>
+
+				<div class="row g-3">
+					<div class="col-md-6">
+						<div class="field">
+							<div class="label">Environment</div>
+							<input class="input" name="environment" placeholder="e.g., library, bedroom, cafe">
+						</div>
+					</div>
+					<div class="col-md-6">
+						<div class="field">
+							<div class="label">Trigger</div>
+							<input class="input" name="trigger_reason" placeholder="e.g., too hard, unclear, tired, distracted">
+						</div>
+					</div>
+				</div>
+
+				<div class="field">
+					<div class="label">What did you do instead?</div>
+					<textarea class="textarea" name="what_did_instead" placeholder="Be honest — this is for patterns."></textarea>
+				</div>
+
+				<div class="rowx">
+					<a class="btnx" href="/">Cancel</a>
+					<button class="btnx btnx-primary" type="submit">Save log</button>
+				</div>
+			</form>
+		</div>
+	</section>
 {% endblock %}

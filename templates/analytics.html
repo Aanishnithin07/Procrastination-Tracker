@@ -1,64 +1,72 @@
 {% extends "layout.html" %}
 
 {% block title %}Analytics · ProcrastiNation{% endblock %}
+{% block page_title %}Analytics{% endblock %}
+{% block page_subtitle %}Last 30 days of patterns.{% endblock %}
 
 {% block content %}
-	<div class="row">
-		<div class="col-lg-10 col-xl-9 mx-auto">
-			<div class="d-flex align-items-center justify-content-between mb-3">
-				<div>
-					<h1 class="text-white mb-0" style="font-weight: 800;">Analytics</h1>
-					<div class="text-white-50">Last 30 days · patterns you can act on.</div>
-				</div>
-				<a class="btn btn-outline-light" href="/">Back</a>
-			</div>
-
-			{% if insights %}
-				<div class="card mb-4">
-					<div class="card-header">Insights</div>
-					<div class="card-body">
-						<ul class="mb-0">
-							{% for i in insights %}
-								<li>{{ i }}</li>
-							{% endfor %}
-						</ul>
+	<div class="stack">
+		{% if insights %}
+			<section class="panel">
+				<div class="panel-header">
+					<div>
+						<div class="panel-title">Insights</div>
+						<div class="help">Quick readouts from your data.</div>
 					</div>
 				</div>
-			{% endif %}
+				<div class="panel-body">
+					<ul class="mb-0">
+						{% for i in insights %}
+							<li>{{ i }}</li>
+						{% endfor %}
+					</ul>
+				</div>
+			</section>
+		{% endif %}
 
-			<div class="row g-3">
-				<div class="col-lg-6">
-					<div class="card">
-						<div class="card-header">By hour of day</div>
-						<div class="card-body">
+		<div class="row g-3">
+			<div class="col-lg-6">
+				<section class="panel">
+					<div class="panel-header"><div class="panel-title">By hour</div></div>
+					<div class="panel-body">
+						<div class="chart-wrap is-loading">
 							<canvas id="chartHourly" height="140"></canvas>
 						</div>
 					</div>
-				</div>
-				<div class="col-lg-6">
-					<div class="card">
-						<div class="card-header">Mood distribution</div>
-						<div class="card-body">
+				</section>
+			</div>
+
+			<div class="col-lg-6">
+				<section class="panel">
+					<div class="panel-header"><div class="panel-title">Mood</div></div>
+					<div class="panel-body">
+						<div class="chart-wrap is-loading">
 							<canvas id="chartMood" height="140"></canvas>
 						</div>
 					</div>
-				</div>
-				<div class="col-lg-6">
-					<div class="card">
-						<div class="card-header">Energy level</div>
-						<div class="card-body">
+				</section>
+			</div>
+
+			<div class="col-lg-6">
+				<section class="panel">
+					<div class="panel-header"><div class="panel-title">Energy</div></div>
+					<div class="panel-body">
+						<div class="chart-wrap is-loading">
 							<canvas id="chartEnergy" height="140"></canvas>
 						</div>
 					</div>
-				</div>
-				<div class="col-lg-6">
-					<div class="card">
-						<div class="card-header">Environment</div>
-						<div class="card-body">
+				</section>
+			</div>
+
+			<div class="col-lg-6">
+				<section class="panel">
+					<div class="panel-header"><div class="panel-title">Environment</div></div>
+					<div class="panel-body">
+						<div class="chart-wrap is-loading">
 							<canvas id="chartEnv" height="140"></canvas>
 						</div>
 					</div>
-				</div>
+				</section>
 			</div>
 		</div>
 	</div>

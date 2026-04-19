@@ -1,56 +1,65 @@
 {% extends "layout.html" %}
 
 {% block title %}Add task · ProcrastiNation{% endblock %}
+{% block page_title %}Add task{% endblock %}
+{% block page_subtitle %}Create a crisp next action.{% endblock %}
 
 {% block content %}
-	<div class="row">
-		<div class="col-lg-8 col-xl-6 mx-auto">
-			<div class="card">
-				<div class="card-header">Add a task</div>
-				<div class="card-body">
-					<form method="post" action="/add_task">
-						<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-
-						<div class="mb-3">
-							<label class="form-label">Title</label>
-							<input class="form-control" name="title" placeholder="e.g., Finish project report" required>
-						</div>
-
-						<div class="mb-3">
-							<label class="form-label">Description (optional)</label>
-							<textarea class="form-control" name="description" rows="3" placeholder="Why it matters, what done looks like..."></textarea>
-						</div>
-
-						<div class="row g-3">
-							<div class="col-md-6">
-								<label class="form-label">Estimated time (minutes)</label>
-								<input class="form-control" type="number" name="estimated_time" min="1" placeholder="e.g., 45">
-							</div>
-							<div class="col-md-6">
-								<label class="form-label">Importance</label>
-								<select class="form-select" name="importance" required>
-									<option value="" selected disabled>Choose…</option>
-									<option value="1">1 (low)</option>
-									<option value="2">2</option>
-									<option value="3">3</option>
-									<option value="4">4</option>
-									<option value="5">5 (high)</option>
-								</select>
-							</div>
-						</div>
-
-						<div class="mb-3 mt-3">
-							<label class="form-label">Deadline (optional)</label>
-							<input class="form-control" type="datetime-local" name="deadline">
-						</div>
-
-						<div class="d-flex justify-content-between">
-							<a class="btn btn-outline-primary" href="/">Cancel</a>
-							<button class="btn btn-primary" type="submit">Add task</button>
-						</div>
-					</form>
-				</div>
+	<section class="panel" style="max-width: 760px; margin: 0 auto;">
+		<div class="panel-header">
+			<div>
+				<div class="panel-title">Task details</div>
+				<div class="help">Clarity reduces friction.</div>
 			</div>
 		</div>
-	</div>
+		<div class="panel-body">
+			<form method="post" action="/add_task" class="stack">
+				<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+				<div class="field">
+					<div class="label">Title</div>
+					<input class="input" name="title" placeholder="e.g., Finish project report" required>
+				</div>
+
+				<div class="field">
+					<div class="label">Description</div>
+					<textarea class="textarea" name="description" placeholder="Why it matters, what done looks like..."></textarea>
+					<div class="help">Optional, but helps your future self.</div>
+				</div>
+
+				<div class="row g-3">
+					<div class="col-md-6">
+						<div class="field">
+							<div class="label">Estimated time (minutes)</div>
+							<input class="input" type="number" name="estimated_time" min="1" placeholder="e.g., 45">
+						</div>
+					</div>
+					<div class="col-md-6">
+						<div class="field">
+							<div class="label">Importance</div>
+							<select class="select" name="importance" required>
+								<option value="" selected disabled>Choose…</option>
+								<option value="1">1 (low)</option>
+								<option value="2">2</option>
+								<option value="3">3</option>
+								<option value="4">4</option>
+								<option value="5">5 (high)</option>
+							</select>
+						</div>
+					</div>
+				</div>
+
+				<div class="field">
+					<div class="label">Deadline</div>
+					<input class="input" type="datetime-local" name="deadline">
+					<div class="help">Optional; used for urgency ordering.</div>
+				</div>
+
+				<div class="rowx">
+					<a class="btnx" href="/">Cancel</a>
+					<button class="btnx btnx-primary" type="submit">Create task</button>
+				</div>
+			</form>
+		</div>
+	</section>
 {% endblock %}

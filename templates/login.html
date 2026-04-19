@@ -1,32 +1,34 @@
 {% extends "layout.html" %}
 
 {% block title %}Login · ProcrastiNation{% endblock %}
+{% block page_title %}Login{% endblock %}
+{% block page_subtitle %}Welcome back.{% endblock %}
 
 {% block content %}
-	<div class="row">
-		<div class="col-lg-6 col-xl-5 mx-auto">
-			<div class="card">
-				<div class="card-header">Login</div>
-				<div class="card-body">
-					<form method="post" action="{{ url_for('login', next=request.args.get('next')) }}">
-						<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-
-						<div class="mb-3">
-							<label class="form-label">Username</label>
-							<input class="form-control" name="username" autocomplete="username" required>
-						</div>
-						<div class="mb-3">
-							<label class="form-label">Password</label>
-							<input class="form-control" type="password" name="password" autocomplete="current-password" required>
-						</div>
-						<button class="btn btn-primary w-100" type="submit">Login</button>
-					</form>
-
-					<div class="text-muted mt-3">
-						New here? <a href="/register">Create an account</a>
-					</div>
-				</div>
+	<section class="panel" style="max-width: 520px; margin: 0 auto;">
+		<div class="panel-header">
+			<div>
+				<div class="panel-title">Sign in</div>
+				<div class="help">Pick up where you left off.</div>
 			</div>
 		</div>
-	</div>
+		<div class="panel-body">
+			<form method="post" action="{{ url_for('login', next=request.args.get('next')) }}" class="stack">
+				<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+				<div class="field">
+					<div class="label">Username</div>
+					<input class="input" name="username" autocomplete="username" required>
+				</div>
+
+				<div class="field">
+					<div class="label">Password</div>
+					<input class="input" type="password" name="password" autocomplete="current-password" required>
+				</div>
+
+				<button class="btnx btnx-primary" type="submit">Login</button>
+				<div class="help">New here? <a href="/register" style="color: var(--accent);">Create an account</a></div>
+			</form>
+		</div>
+	</section>
 {% endblock %}
