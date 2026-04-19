@@ -1,9 +1,12 @@
 import logging
 import os
+import csv
+import io
+from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
 from cs50 import SQL
-from flask import Flask, flash, jsonify, redirect, render_template, request, session
+from flask import Flask, Response, flash, jsonify, redirect, render_template, request, session
 from flask_session import Session
 from werkzeug.security import check_password_hash, generate_password_hash
 
@@ -302,6 +305,339 @@ def _build_log_insight(mood: str, energy_level: int) -> str:
     if energy_level >= 8:
         return "Energy is available. Your best lever now is clarity: pick one deliverable and finish it before switching."
     return "You captured a valuable signal. Repeating this log over time will help isolate your highest-impact trigger."
+
+
+def _parse_iso_date(value):
+    if not value:
+        return None
+    try:
+        return datetime.strptime(str(value), "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def _week_start(day_value):
+    return day_value - timedelta(days=day_value.weekday())
+
+
+def _iter_dates(start, end):
+    cursor = start
+    while cursor <= end:
+        yield cursor
+        cursor += timedelta(days=1)
+
+
+def _resolve_analytics_range(user_id: int, range_key: str):
+    today = datetime.utcnow().date()
+    key = (range_key or "week").lower()
+
+    if key == "today":
+        return key, "Today", today, today
+
+    if key == "week":
+        start = today - timedelta(days=today.weekday())
+        return key, "This Week", start, today
+
+    if key == "month":
+        start = today.replace(day=1)
+        return key, "This Month", start, today
+
+    if key == "all":
+        log_min = db.execute(
+            "SELECT MIN(date(timestamp)) AS d FROM procrastination_logs WHERE user_id = ?",
+            user_id,
+        )[0]["d"]
+        task_min = db.execute(
+            "SELECT MIN(date(created_at)) AS d FROM tasks WHERE user_id = ?",
+            user_id,
+        )[0]["d"]
+        complete_min = db.execute(
+            """
+            SELECT MIN(date(COALESCE(completed_at, created_at))) AS d
+            FROM tasks
+            WHERE user_id = ? AND status = 'completed'
+            """,
+            user_id,
+        )[0]["d"]
+
+        candidates = [d for d in [_parse_iso_date(log_min), _parse_iso_date(task_min), _parse_iso_date(complete_min)] if d]
+        start = min(candidates) if candidates else (today - timedelta(days=29))
+        return key, "All Time", start, today
+
+    start = today - timedelta(days=today.weekday())
+    return "week", "This Week", start, today
+
+
+def _time_period(hour: int) -> str:
+    if 5 <= hour <= 11:
+        return "morning"
+    if 12 <= hour <= 16:
+        return "afternoon"
+    if 17 <= hour <= 21:
+        return "evening"
+    return "late night"
+
+
+def _generate_analytics_insights(
+    weekday_hour_counts,
+    mood_counts,
+    low_energy_combo_counts,
+    low_energy_count,
+    logs_total,
+    top_environment,
+    tasks_added_total,
+    tasks_completed_total,
+    completion_rate,
+):
+    insights = []
+    weekday_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
+    if weekday_hour_counts:
+        (peak_weekday, peak_hour), _peak_count = max(weekday_hour_counts.items(), key=lambda item: item[1])
+        insights.append(
+            f"You procrastinate most on {weekday_names[peak_weekday]} {_time_period(peak_hour)}s, peaking around {peak_hour:02d}:00."
+        )
+
+    if mood_counts and logs_total > 0:
+        mood, count = max(mood_counts.items(), key=lambda item: item[1])
+        percent = round((count / logs_total) * 100)
+        insights.append(f"{mood.capitalize()} appears in {percent}% of logs in this range.")
+
+    if low_energy_combo_counts:
+        (combo_mood, bucket_hour), _combo_count = max(low_energy_combo_counts.items(), key=lambda item: item[1])
+        insights.append(
+            f"Low energy + {combo_mood} is your most common combo at {bucket_hour:02d}:00-{bucket_hour + 1:02d}:59."
+        )
+    elif low_energy_count > 0 and logs_total > 0:
+        low_percent = round((low_energy_count / logs_total) * 100)
+        insights.append(f"{low_percent}% of procrastination logs happened when your energy was 4 or lower.")
+
+    if top_environment:
+        insights.append(f"{top_environment['label']} is your highest-friction environment right now.")
+
+    if tasks_added_total > 0:
+        insights.append(
+            f"You completed {tasks_completed_total} tasks against {tasks_added_total} tasks added in this period ({completion_rate}% completion)."
+        )
+        if completion_rate >= 75:
+            insights.append("Your completion momentum is strong. Keep your current planning cadence.")
+        elif completion_rate <= 40:
+            insights.append("Your completion rate is under pressure. Try reducing task scope and prioritizing one must-finish task each day.")
+
+    unique = []
+    for text in insights:
+        if text not in unique:
+            unique.append(text)
+
+    fallback = [
+        "Pattern visibility improves quickly when you log consistently for a full week.",
+        "Short, concrete task definitions usually reduce uncertainty-driven procrastination.",
+        "Energy-aware scheduling can convert difficult windows into low-friction wins.",
+    ]
+    for text in fallback:
+        if len(unique) >= 3:
+            break
+        unique.append(text)
+
+    return unique[:5]
+
+
+def _build_analytics_payload(user_id: int, range_key: str):
+    key, label, start_date, end_date = _resolve_analytics_range(user_id, range_key)
+
+    logs = db.execute(
+        """
+        SELECT timestamp, mood, energy_level, environment, trigger_reason, intended_task_text
+        FROM procrastination_logs
+        WHERE user_id = ?
+          AND date(timestamp) BETWEEN date(?) AND date(?)
+        ORDER BY timestamp ASC
+        """,
+        user_id,
+        start_date.isoformat(),
+        end_date.isoformat(),
+    )
+
+    daily_counts = defaultdict(int)
+    hourly_counts = [0] * 24
+    mood_counts = defaultdict(int)
+    environment_counts = defaultdict(int)
+    mood_energy_points = []
+    weekday_hour_counts = defaultdict(int)
+    low_energy_combo_counts = defaultdict(int)
+    low_energy_count = 0
+
+    for row in logs:
+        stamp = _parse_sqlite_datetime(row.get("timestamp"))
+        if not stamp:
+            continue
+
+        day = stamp.date()
+        hour = stamp.hour
+        mood = (row.get("mood") or "unknown").strip().lower()
+        energy = int(row.get("energy_level") or 5)
+        energy = max(1, min(10, energy))
+        environment = (row.get("environment") or "").strip()
+
+        daily_counts[day] += 1
+        hourly_counts[hour] += 1
+        mood_counts[mood] += 1
+        weekday_hour_counts[(day.weekday(), hour)] += 1
+
+        if environment:
+            environment_counts[environment] += 1
+
+        if energy <= 4:
+            low_energy_count += 1
+            bucket_hour = (hour // 2) * 2
+            low_energy_combo_counts[(mood, bucket_hour)] += 1
+
+        mood_energy_points.append(
+            {
+                "x": energy,
+                "y": hour,
+                "mood": mood,
+                "timestamp": stamp.strftime("%Y-%m-%d %H:%M"),
+                "date": day.isoformat(),
+            }
+        )
+
+    heatmap_start = _week_start(start_date)
+    heatmap_points = []
+    for day in _iter_dates(heatmap_start, end_date):
+        in_range = start_date <= day <= end_date
+        week_index = (day - heatmap_start).days // 7
+        heatmap_points.append(
+            {
+                "x": week_index,
+                "y": day.weekday(),
+                "v": int(daily_counts.get(day, 0)) if in_range else 0,
+                "date": day.isoformat(),
+                "in_range": in_range,
+            }
+        )
+    heatmap_weeks = ((end_date - heatmap_start).days // 7) + 1
+
+    mood_distribution = [
+        {"mood": mood, "count": count}
+        for mood, count in sorted(mood_counts.items(), key=lambda item: item[1], reverse=True)
+    ]
+
+    created_day_rows = db.execute(
+        """
+        SELECT date(created_at) AS day, COUNT(*) AS count
+        FROM tasks
+        WHERE user_id = ?
+          AND date(created_at) BETWEEN date(?) AND date(?)
+        GROUP BY date(created_at)
+        """,
+        user_id,
+        start_date.isoformat(),
+        end_date.isoformat(),
+    )
+    completed_day_rows = db.execute(
+        """
+        SELECT date(COALESCE(completed_at, created_at)) AS day, COUNT(*) AS count
+        FROM tasks
+        WHERE user_id = ?
+          AND status = 'completed'
+          AND date(COALESCE(completed_at, created_at)) BETWEEN date(?) AND date(?)
+        GROUP BY date(COALESCE(completed_at, created_at))
+        """,
+        user_id,
+        start_date.isoformat(),
+        end_date.isoformat(),
+    )
+
+    created_per_week = defaultdict(int)
+    completed_per_week = defaultdict(int)
+
+    for row in created_day_rows:
+        day = _parse_iso_date(row.get("day"))
+        if not day:
+            continue
+        created_per_week[_week_start(day)] += int(row.get("count") or 0)
+
+    for row in completed_day_rows:
+        day = _parse_iso_date(row.get("day"))
+        if not day:
+            continue
+        completed_per_week[_week_start(day)] += int(row.get("count") or 0)
+
+    week_labels = []
+    week_cursor = _week_start(start_date)
+    while week_cursor <= end_date:
+        week_labels.append(week_cursor)
+        week_cursor += timedelta(days=7)
+
+    tasks_added_series = [created_per_week.get(week, 0) for week in week_labels]
+    tasks_completed_series = [completed_per_week.get(week, 0) for week in week_labels]
+    tasks_added_total = int(sum(tasks_added_series))
+    tasks_completed_total = int(sum(tasks_completed_series))
+
+    completed_from_created = db.execute(
+        """
+        SELECT COUNT(*) AS count
+        FROM tasks
+        WHERE user_id = ?
+          AND date(created_at) BETWEEN date(?) AND date(?)
+          AND status = 'completed'
+        """,
+        user_id,
+        start_date.isoformat(),
+        end_date.isoformat(),
+    )[0]["count"]
+
+    completion_rate = int(round((completed_from_created / tasks_added_total) * 100)) if tasks_added_total > 0 else 0
+    completion_rate = max(0, min(100, completion_rate))
+
+    top_environment = None
+    if environment_counts:
+        env, _count = max(environment_counts.items(), key=lambda item: item[1])
+        top_environment = {"label": env}
+
+    insights = _generate_analytics_insights(
+        weekday_hour_counts=weekday_hour_counts,
+        mood_counts=mood_counts,
+        low_energy_combo_counts=low_energy_combo_counts,
+        low_energy_count=low_energy_count,
+        logs_total=len(mood_energy_points),
+        top_environment=top_environment,
+        tasks_added_total=tasks_added_total,
+        tasks_completed_total=tasks_completed_total,
+        completion_rate=completion_rate,
+    )
+
+    return {
+        "range": key,
+        "range_label": label,
+        "start_date": start_date.isoformat(),
+        "end_date": end_date.isoformat(),
+        "heatmap": {
+            "points": heatmap_points,
+            "weeks": heatmap_weeks,
+        },
+        "hourly": {
+            "labels": list(range(24)),
+            "counts": hourly_counts,
+        },
+        "mood_energy": {
+            "points": mood_energy_points,
+        },
+        "mood_distribution": mood_distribution,
+        "completion_trend": {
+            "labels": [week.strftime("%b %d") for week in week_labels],
+            "added": tasks_added_series,
+            "completed": tasks_completed_series,
+        },
+        "completion_rate": completion_rate,
+        "summary": {
+            "logs_total": len(mood_energy_points),
+            "tasks_added_total": tasks_added_total,
+            "tasks_completed_total": tasks_completed_total,
+        },
+        "insights": insights,
+    }
 
 
 @app.context_processor
@@ -929,72 +1265,148 @@ def log_procrastination():
 @app.route("/analytics")
 @login_required
 def analytics():
-    """Show detailed analytics and insights"""
+    """Render analytics dashboard shell with initial data."""
+    initial_range = request.args.get("range", "week")
+    analytics_data = _build_analytics_payload(session["user_id"], initial_range)
+    return render_template("analytics.html", analytics_data=analytics_data)
+
+
+@app.route("/api/analytics")
+@login_required
+def analytics_api():
+    """Range-aware analytics data endpoint used by the dashboard."""
+    range_key = request.args.get("range", "week")
+    payload = _build_analytics_payload(session["user_id"], range_key)
+    return jsonify({"ok": True, **payload})
+
+
+@app.route("/api/analytics/export")
+@login_required
+def analytics_export_csv():
+    """Export analytics data for the selected range as CSV."""
     user_id = session["user_id"]
-    
-    # Get procrastination by hour of day
-    hourly_data = db.execute("""
-        SELECT 
-            strftime('%H', timestamp) as hour,
-            COUNT(*) as count
-        FROM procrastination_logs 
-        WHERE user_id = ? AND timestamp >= datetime('now', '-30 days')
-        GROUP BY strftime('%H', timestamp)
-        ORDER BY hour
-    """, user_id)
-    
-    # Get mood analysis
-    mood_data = db.execute("""
-        SELECT mood, COUNT(*) as count
-        FROM procrastination_logs 
-        WHERE user_id = ? AND timestamp >= datetime('now', '-30 days')
-        GROUP BY mood
-        ORDER BY count DESC
-    """, user_id)
-    
-    # Get energy level analysis
-    energy_data = db.execute("""
-        SELECT energy_level, COUNT(*) as count
-        FROM procrastination_logs 
-        WHERE user_id = ? AND timestamp >= datetime('now', '-30 days')
-        GROUP BY energy_level
-        ORDER BY energy_level
-    """, user_id)
-    
-    # Get environment analysis
-    env_data = db.execute("""
-        SELECT environment, COUNT(*) as count
-        FROM procrastination_logs 
-        WHERE user_id = ? AND timestamp >= datetime('now', '-30 days')
-            AND environment IS NOT NULL
-        GROUP BY environment
-        ORDER BY count DESC
-    """, user_id)
-    
-    # Generate insights
-    insights = []
-    
-    if hourly_data:
-        peak_hour = max(hourly_data, key=lambda x: x['count'])
-        insights.append(f"🕐 Your peak procrastination time is {peak_hour['hour']}:00")
-    
-    if mood_data:
-        top_mood = mood_data[0]
-        insights.append(f"😊 You procrastinate most when feeling: {top_mood['mood']}")
-    
-    if energy_data:
-        low_energy_count = sum(d['count'] for d in energy_data if int(d['energy_level']) <= 4)
-        total_count = sum(d['count'] for d in energy_data)
-        if total_count > 0:
-            low_energy_percent = round(low_energy_count / total_count * 100)
-            insights.append(f"⚡ {low_energy_percent}% of procrastination happens when energy ≤ 4")
-    
-    return render_template("analytics.html", 
-                         hourly_data=hourly_data,
-                         mood_data=mood_data,
-                         energy_data=energy_data,
-                         env_data=env_data,
-                         insights=insights)
+    range_key = request.args.get("range", "week")
+    key, label, start_date, end_date = _resolve_analytics_range(user_id, range_key)
+
+    logs = db.execute(
+        """
+        SELECT
+            l.timestamp,
+            l.mood,
+            l.energy_level,
+            l.environment,
+            l.trigger_reason,
+            l.intended_task_text,
+            l.what_did_instead,
+            t.title AS task_title
+        FROM procrastination_logs l
+        LEFT JOIN tasks t ON l.task_id = t.id
+        WHERE l.user_id = ?
+          AND date(l.timestamp) BETWEEN date(?) AND date(?)
+        ORDER BY l.timestamp ASC
+        """,
+        user_id,
+        start_date.isoformat(),
+        end_date.isoformat(),
+    )
+
+    tasks = db.execute(
+        """
+        SELECT
+            id,
+            title,
+            status,
+            importance,
+            estimated_time,
+            deadline,
+            created_at,
+            completed_at
+        FROM tasks
+        WHERE user_id = ?
+          AND (
+            date(created_at) BETWEEN date(?) AND date(?)
+            OR (
+                status = 'completed'
+                AND date(COALESCE(completed_at, created_at)) BETWEEN date(?) AND date(?)
+            )
+          )
+        ORDER BY created_at ASC
+        """,
+        user_id,
+        start_date.isoformat(),
+        end_date.isoformat(),
+        start_date.isoformat(),
+        end_date.isoformat(),
+    )
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+
+    writer.writerow(["ProcrastiNation Analytics Export"])
+    writer.writerow(["Range", label])
+    writer.writerow(["Start", start_date.isoformat()])
+    writer.writerow(["End", end_date.isoformat()])
+    writer.writerow([])
+
+    writer.writerow(["Procrastination Logs"])
+    writer.writerow([
+        "timestamp",
+        "mood",
+        "energy_level",
+        "hour",
+        "environment",
+        "trigger_reason",
+        "intended_task_text",
+        "what_did_instead",
+        "task_title",
+    ])
+
+    for row in logs:
+        stamp = _parse_sqlite_datetime(row.get("timestamp"))
+        writer.writerow([
+            stamp.strftime("%Y-%m-%d %H:%M") if stamp else (row.get("timestamp") or ""),
+            row.get("mood") or "",
+            row.get("energy_level") or "",
+            stamp.hour if stamp else "",
+            row.get("environment") or "",
+            row.get("trigger_reason") or "",
+            row.get("intended_task_text") or "",
+            row.get("what_did_instead") or "",
+            row.get("task_title") or "",
+        ])
+
+    writer.writerow([])
+    writer.writerow(["Tasks"])
+    writer.writerow([
+        "id",
+        "title",
+        "status",
+        "importance",
+        "estimated_time_minutes",
+        "deadline",
+        "created_at",
+        "completed_at",
+    ])
+
+    for row in tasks:
+        writer.writerow([
+            row.get("id") or "",
+            row.get("title") or "",
+            row.get("status") or "",
+            row.get("importance") or "",
+            row.get("estimated_time") or "",
+            row.get("deadline") or "",
+            row.get("created_at") or "",
+            row.get("completed_at") or "",
+        ])
+
+    csv_text = output.getvalue()
+    output.close()
+
+    filename = f"analytics_{key}_{start_date.isoformat()}_{end_date.isoformat()}.csv"
+    response = Response(csv_text, mimetype="text/csv")
+    response.headers["Content-Disposition"] = f"attachment; filename={filename}"
+    return response
 
 
 @app.route("/healthz")

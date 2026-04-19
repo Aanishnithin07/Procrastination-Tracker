@@ -251,73 +251,364 @@ document.addEventListener('DOMContentLoaded', () => {
 		renderStep();
 	}
 
-	// Analytics charts
-	if (window.PROCRASTINATION_ANALYTICS && typeof Chart !== 'undefined') {
-		const { hourly_data, mood_data, energy_data, env_data } = window.PROCRASTINATION_ANALYTICS;
+	// Analytics insight dashboard
+	const analyticsRoot = document.getElementById('analyticsDashboard');
+	const analyticsBootNode = document.getElementById('analytics-dashboard-boot');
+	let analyticsBoot = null;
+	if (analyticsBootNode) {
+		try {
+			analyticsBoot = JSON.parse(analyticsBootNode.textContent || '{}');
+		} catch {
+			analyticsBoot = null;
+		}
+	}
+	if (!analyticsBoot && window.ANALYTICS_DASHBOARD_BOOT) {
+		analyticsBoot = window.ANALYTICS_DASHBOARD_BOOT;
+	}
 
-		// Remove skeletons once we render
-		document.querySelectorAll('.chart-wrap.is-loading').forEach((el) => el.classList.remove('is-loading'));
+	if (analyticsRoot && analyticsBoot && typeof Chart !== 'undefined') {
+		const bootPayload = analyticsBoot;
+		const rangeButtons = [...analyticsRoot.querySelectorAll('[data-range]')];
+		const exportBtn = document.getElementById('analyticsExportBtn');
+		const insightsList = document.getElementById('analyticsInsights');
+		const summaryLogs = document.getElementById('summaryLogs');
+		const summaryAdded = document.getElementById('summaryAdded');
+		const summaryCompleted = document.getElementById('summaryCompleted');
+		const gaugeArc = document.getElementById('completionGaugeArc');
+		const gaugeValue = document.getElementById('completionGaugeValue');
 
-		const hourlyLabels = (hourly_data || []).map((d) => `${d.hour}:00`);
-		const hourlyCounts = (hourly_data || []).map((d) => d.count);
+		const charts = {};
+		const moodPalette = {
+			overwhelmed: '#ef4444',
+			anxious: '#f59e0b',
+			bored: '#94a3b8',
+			tired: '#6366f1',
+			distracted: '#3b82f6',
+			unknown: '#64748b',
+		};
 
-		const moodLabels = (mood_data || []).map((d) => d.mood);
-		const moodCounts = (mood_data || []).map((d) => d.count);
+		const setActiveRange = (range) => {
+			rangeButtons.forEach((btn) => {
+				btn.classList.toggle('is-active', btn.getAttribute('data-range') === range);
+			});
+		};
 
-		const energyLabels = (energy_data || []).map((d) => String(d.energy_level));
-		const energyCounts = (energy_data || []).map((d) => d.count);
+		const updateExportHref = (range) => {
+			if (!exportBtn) return;
+			exportBtn.setAttribute('href', `/api/analytics/export?range=${encodeURIComponent(range || 'week')}`);
+		};
 
-		const envLabels = (env_data || []).map((d) => d.environment || 'Unknown');
-		const envCounts = (env_data || []).map((d) => d.count);
+		const destroyChart = (key) => {
+			if (charts[key]) {
+				charts[key].destroy();
+				delete charts[key];
+			}
+		};
 
-		const buildBar = (id, labels, data, label) => {
-			const el = document.getElementById(id);
+		const colorForIntensity = (value, max) => {
+			const intensity = max > 0 ? (value / max) : 0;
+			const alpha = 0.12 + (0.76 * intensity);
+			return `rgba(108, 99, 255, ${alpha.toFixed(3)})`;
+		};
+
+		const renderInsights = (insights) => {
+			if (!insightsList) return;
+			insightsList.innerHTML = '';
+			const source = Array.isArray(insights) && insights.length
+				? insights
+				: ['Not enough signal yet. Keep logging and this section will become more specific.'];
+			source.forEach((text) => {
+				const li = document.createElement('li');
+				li.textContent = text;
+				insightsList.appendChild(li);
+			});
+		};
+
+		const renderSummary = (summary) => {
+			if (!summary) return;
+			if (summaryLogs) summaryLogs.textContent = String(safeParseInt(summary.logs_total, 0));
+			if (summaryAdded) summaryAdded.textContent = String(safeParseInt(summary.tasks_added_total, 0));
+			if (summaryCompleted) summaryCompleted.textContent = String(safeParseInt(summary.tasks_completed_total, 0));
+		};
+
+		const renderGauge = (rateValue) => {
+			if (!gaugeArc || !gaugeValue) return;
+			const rate = Math.max(0, Math.min(100, safeParseInt(rateValue, 0)));
+			const length = gaugeArc.getTotalLength();
+			gaugeArc.style.strokeDasharray = `${length}`;
+			gaugeArc.style.strokeDashoffset = `${length * (1 - (rate / 100))}`;
+			gaugeValue.textContent = `${rate}%`;
+		};
+
+		const renderHeatmap = (heatmap) => {
+			const el = document.getElementById('chartHeatmap');
 			if (!el) return;
-			// eslint-disable-next-line no-new
-			new Chart(el, {
-				type: 'bar',
+			destroyChart('heatmap');
+
+			const points = (heatmap && Array.isArray(heatmap.points)) ? heatmap.points : [];
+			const maxValue = Math.max(1, ...points.map((p) => safeParseInt(p.v, 0)));
+			const maxWeek = Math.max(0, ...points.map((p) => safeParseInt(p.x, 0)));
+			const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+			charts.heatmap = new Chart(el, {
+				type: 'scatter',
 				data: {
-					labels,
 					datasets: [{
-						label,
-						data,
-						backgroundColor: 'rgba(102, 126, 234, 0.5)',
-						borderColor: 'rgba(102, 126, 234, 1)',
-						borderWidth: 1,
+						data: points,
+						pointStyle: 'rectRounded',
+						pointRadius: (ctx) => ((ctx.raw && ctx.raw.in_range) ? 8 : 6),
+						pointHoverRadius: 9,
+						pointBorderWidth: 1,
+						pointBorderColor: 'rgba(108, 99, 255, 0.42)',
+						pointBackgroundColor: (ctx) => {
+							const raw = ctx.raw || {};
+							if (!raw.in_range) return 'rgba(148, 163, 184, 0.09)';
+							return colorForIntensity(safeParseInt(raw.v, 0), maxValue);
+						},
 					}],
 				},
 				options: {
 					responsive: true,
-					plugins: { legend: { display: false } },
-					scales: { y: { beginAtZero: true, ticks: { precision: 0 } } },
+					maintainAspectRatio: false,
+					plugins: {
+						legend: { display: false },
+						tooltip: {
+							callbacks: {
+								title: (items) => ((items[0] && items[0].raw && items[0].raw.date) ? items[0].raw.date : ''),
+								label: (item) => `${safeParseInt(item.raw && item.raw.v, 0)} logs`,
+							},
+						},
+					},
+					scales: {
+						x: {
+							type: 'linear',
+							min: -0.5,
+							max: maxWeek + 0.5,
+							grid: { display: false },
+							ticks: {
+								stepSize: 1,
+								callback: (value) => `W${safeParseInt(value, 0) + 1}`,
+							},
+						},
+						y: {
+							type: 'linear',
+							min: -0.5,
+							max: 6.5,
+							reverse: true,
+							grid: { display: false },
+							ticks: {
+								stepSize: 1,
+								callback: (value) => weekdays[safeParseInt(value, -1)] || '',
+							},
+						},
+					},
 				},
 			});
 		};
 
-		const buildDoughnut = (id, labels, data) => {
-			const el = document.getElementById(id);
+		const renderHourly = (hourly) => {
+			const el = document.getElementById('chartHourly');
 			if (!el) return;
-			// eslint-disable-next-line no-new
-			new Chart(el, {
+			destroyChart('hourly');
+
+			const labels = (hourly && Array.isArray(hourly.labels)) ? hourly.labels.map((h) => `${String(h).padStart(2, '0')}:00`) : [];
+			const counts = (hourly && Array.isArray(hourly.counts)) ? hourly.counts : [];
+
+			charts.hourly = new Chart(el, {
+				type: 'bar',
+				data: {
+					labels,
+					datasets: [{
+						label: 'Logs',
+						data: counts,
+						borderWidth: 1,
+						borderColor: 'rgba(108, 99, 255, 0.95)',
+						backgroundColor: 'rgba(108, 99, 255, 0.30)',
+						borderRadius: 6,
+					}],
+				},
+				options: {
+					responsive: true,
+					maintainAspectRatio: false,
+					plugins: { legend: { display: false } },
+					scales: {
+						y: { beginAtZero: true, ticks: { precision: 0 } },
+					},
+				},
+			});
+		};
+
+		const renderMoodEnergy = (moodEnergy) => {
+			const el = document.getElementById('chartMoodEnergy');
+			if (!el) return;
+			destroyChart('moodEnergy');
+
+			const points = (moodEnergy && Array.isArray(moodEnergy.points)) ? moodEnergy.points : [];
+			const grouped = {};
+			points.forEach((p) => {
+				const mood = (p.mood || 'unknown').toLowerCase();
+				if (!grouped[mood]) grouped[mood] = [];
+				grouped[mood].push(p);
+			});
+
+			const datasets = Object.keys(grouped).map((mood) => ({
+				label: mood,
+				data: grouped[mood],
+				pointRadius: 5,
+				pointHoverRadius: 7,
+				borderWidth: 0,
+				backgroundColor: moodPalette[mood] || moodPalette.unknown,
+			}));
+
+			charts.moodEnergy = new Chart(el, {
+				type: 'scatter',
+				data: { datasets },
+				options: {
+					responsive: true,
+					maintainAspectRatio: false,
+					plugins: {
+						tooltip: {
+							callbacks: {
+								label: (ctx) => {
+									const raw = ctx.raw || {};
+									const mood = raw.mood || ctx.dataset.label;
+									const hour = safeParseInt(raw.y, 0);
+									const energy = safeParseInt(raw.x, 0);
+									return `${mood} | energy ${energy} | ${String(hour).padStart(2, '0')}:00`;
+								},
+							},
+						},
+					},
+					scales: {
+						x: {
+							type: 'linear',
+							min: 0.5,
+							max: 10.5,
+							ticks: { stepSize: 1 },
+							title: { display: true, text: 'Energy level' },
+						},
+						y: {
+							type: 'linear',
+							min: -0.5,
+							max: 23.5,
+							ticks: {
+								stepSize: 2,
+								callback: (value) => `${String(safeParseInt(value, 0)).padStart(2, '0')}:00`,
+							},
+							title: { display: true, text: 'Hour of day' },
+						},
+					},
+				},
+			});
+		};
+
+		const renderMoodDistribution = (distribution) => {
+			const el = document.getElementById('chartMoodDistribution');
+			if (!el) return;
+			destroyChart('moodDistribution');
+
+			const items = Array.isArray(distribution) ? distribution : [];
+			const labels = items.length ? items.map((item) => item.mood) : ['No logs'];
+			const values = items.length ? items.map((item) => safeParseInt(item.count, 0)) : [1];
+			const colors = labels.map((mood) => moodPalette[(mood || 'unknown').toLowerCase()] || moodPalette.unknown);
+
+			charts.moodDistribution = new Chart(el, {
 				type: 'doughnut',
 				data: {
 					labels,
 					datasets: [{
-						data,
-						backgroundColor: [
-							'#667eea', '#764ba2', '#4facfe', '#00f2fe',
-							'#fa709a', '#fee140', '#ff6b6b', '#feca57',
-						],
+						data: values,
+						backgroundColor: colors,
+						borderWidth: 1,
+						borderColor: 'rgba(255,255,255,0.14)',
 					}],
 				},
-				options: { responsive: true },
+				options: {
+					responsive: true,
+					maintainAspectRatio: false,
+					plugins: { legend: { position: 'bottom' } },
+				},
 			});
 		};
 
-		buildBar('chartHourly', hourlyLabels, hourlyCounts, 'Count');
-		buildDoughnut('chartMood', moodLabels, moodCounts);
-		buildBar('chartEnergy', energyLabels, energyCounts, 'Count');
-		buildBar('chartEnv', envLabels, envCounts, 'Count');
+		const renderTaskTrend = (trend) => {
+			const el = document.getElementById('chartTaskTrend');
+			if (!el) return;
+			destroyChart('taskTrend');
+
+			const labels = (trend && Array.isArray(trend.labels)) ? trend.labels : [];
+			const added = (trend && Array.isArray(trend.added)) ? trend.added : [];
+			const completed = (trend && Array.isArray(trend.completed)) ? trend.completed : [];
+
+			charts.taskTrend = new Chart(el, {
+				type: 'line',
+				data: {
+					labels,
+					datasets: [
+						{
+							label: 'Added',
+							data: added,
+							borderColor: 'rgba(59, 130, 246, 1)',
+							backgroundColor: 'rgba(59, 130, 246, 0.2)',
+							pointRadius: 4,
+							tension: 0.35,
+						},
+						{
+							label: 'Completed',
+							data: completed,
+							borderColor: 'rgba(34, 197, 94, 1)',
+							backgroundColor: 'rgba(34, 197, 94, 0.2)',
+							pointRadius: 4,
+							tension: 0.35,
+						},
+					],
+				},
+				options: {
+					responsive: true,
+					maintainAspectRatio: false,
+					scales: {
+						y: { beginAtZero: true, ticks: { precision: 0 } },
+					},
+				},
+			});
+		};
+
+		const renderPayload = (payload) => {
+			if (!payload) return;
+			renderSummary(payload.summary || {});
+			renderInsights(payload.insights || []);
+			renderHeatmap(payload.heatmap || {});
+			renderHourly(payload.hourly || {});
+			renderMoodEnergy(payload.mood_energy || {});
+			renderMoodDistribution(payload.mood_distribution || []);
+			renderTaskTrend(payload.completion_trend || {});
+			renderGauge(payload.completion_rate || 0);
+			setActiveRange(payload.range || 'week');
+			updateExportHref(payload.range || 'week');
+		};
+
+		const fetchRange = async (range) => {
+			const url = `/api/analytics?range=${encodeURIComponent(range || 'week')}`;
+			const res = await fetch(url, { headers: { Accept: 'application/json' } });
+			if (!res.ok) throw new Error('Failed to load analytics');
+			const data = await res.json();
+			if (!data || !data.ok) throw new Error('Invalid analytics response');
+			return data;
+		};
+
+		rangeButtons.forEach((btn) => {
+			btn.addEventListener('click', async () => {
+				const range = btn.getAttribute('data-range') || 'week';
+				try {
+					const payload = await fetchRange(range);
+					renderPayload(payload);
+				} catch {
+					toast('Could not refresh analytics for that range.', 'danger', 'Analytics');
+				}
+			});
+		});
+
+		renderPayload(bootPayload);
 	}
 
 	// Command center dashboard (kanban + quick add + quotes)

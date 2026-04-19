@@ -2,83 +2,142 @@
 
 {% block title %}Analytics · ProcrastiNation{% endblock %}
 {% block page_title %}Analytics{% endblock %}
-{% block page_subtitle %}Last 30 days of patterns.{% endblock %}
+{% block page_subtitle %}Powerful pattern intelligence for your execution system.{% endblock %}
 
 {% block content %}
-	<div class="stack">
-		{% if insights %}
-			<section class="panel">
-				<div class="panel-header">
-					<div>
-						<div class="panel-title">Insights</div>
-						<div class="help">Quick readouts from your data.</div>
+	<div class="stack analytics-dash" id="analyticsDashboard" data-initial-range="{{ analytics_data.range }}">
+		<section class="panel">
+			<div class="panel-header analytics-topbar">
+				<div>
+					<div class="panel-title">Insight dashboard</div>
+					<div class="help">Filter the time horizon and watch every chart update instantly.</div>
+				</div>
+
+				<div class="analytics-actions">
+					<div class="range-filter" id="analyticsRangeFilter" aria-label="Date range">
+						<button class="range-pill" type="button" data-range="today">Today</button>
+						<button class="range-pill is-active" type="button" data-range="week">This Week</button>
+						<button class="range-pill" type="button" data-range="month">This Month</button>
+						<button class="range-pill" type="button" data-range="all">All Time</button>
+					</div>
+					<a class="btnx" id="analyticsExportBtn" href="/api/analytics/export?range={{ analytics_data.range }}">Export CSV</a>
+				</div>
+			</div>
+
+			<div class="panel-body">
+				<div class="analytics-kpis">
+					<div class="akpi">
+						<div class="akpi-k" id="summaryLogs">0</div>
+						<div class="akpi-t">Procrastination logs</div>
+					</div>
+					<div class="akpi">
+						<div class="akpi-k" id="summaryAdded">0</div>
+						<div class="akpi-t">Tasks added</div>
+					</div>
+					<div class="akpi">
+						<div class="akpi-k" id="summaryCompleted">0</div>
+						<div class="akpi-t">Tasks completed</div>
 					</div>
 				</div>
-				<div class="panel-body">
-					<ul class="mb-0">
-						{% for i in insights %}
-							<li>{{ i }}</li>
-						{% endfor %}
-					</ul>
+			</div>
+		</section>
+
+		<section class="panel">
+			<div class="panel-header">
+				<div>
+					<div class="panel-title">Procrastination Patterns</div>
+					<div class="help">Heatmap frequency by day + hourly distribution.</div>
 				</div>
-			</section>
-		{% endif %}
-
-		<div class="row g-3">
-			<div class="col-lg-6">
-				<section class="panel">
-					<div class="panel-header"><div class="panel-title">By hour</div></div>
-					<div class="panel-body">
-						<div class="chart-wrap is-loading">
-							<canvas id="chartHourly" height="140"></canvas>
+			</div>
+			<div class="panel-body">
+				<div class="analytics-grid-two">
+					<div class="chart-block">
+						<div class="chart-block-title">Heatmap calendar</div>
+						<div class="chart-canvas chart-canvas-heat">
+							<canvas id="chartHeatmap"></canvas>
 						</div>
 					</div>
-				</section>
-			</div>
-
-			<div class="col-lg-6">
-				<section class="panel">
-					<div class="panel-header"><div class="panel-title">Mood</div></div>
-					<div class="panel-body">
-						<div class="chart-wrap is-loading">
-							<canvas id="chartMood" height="140"></canvas>
+					<div class="chart-block">
+						<div class="chart-block-title">Time-of-day bar chart</div>
+						<div class="chart-canvas chart-canvas-md">
+							<canvas id="chartHourly"></canvas>
 						</div>
 					</div>
-				</section>
+				</div>
 			</div>
+		</section>
 
-			<div class="col-lg-6">
-				<section class="panel">
-					<div class="panel-header"><div class="panel-title">Energy</div></div>
-					<div class="panel-body">
-						<div class="chart-wrap is-loading">
-							<canvas id="chartEnergy" height="140"></canvas>
+		<section class="panel">
+			<div class="panel-header">
+				<div>
+					<div class="panel-title">Mood & Energy</div>
+					<div class="help">Detect low-energy windows and emotional clustering.</div>
+				</div>
+			</div>
+			<div class="panel-body">
+				<div class="analytics-grid-two">
+					<div class="chart-block">
+						<div class="chart-block-title">Energy vs hour scatter</div>
+						<div class="chart-canvas chart-canvas-lg">
+							<canvas id="chartMoodEnergy"></canvas>
 						</div>
 					</div>
-				</section>
-			</div>
-
-			<div class="col-lg-6">
-				<section class="panel">
-					<div class="panel-header"><div class="panel-title">Environment</div></div>
-					<div class="panel-body">
-						<div class="chart-wrap is-loading">
-							<canvas id="chartEnv" height="140"></canvas>
+					<div class="chart-block">
+						<div class="chart-block-title">Mood distribution</div>
+						<div class="chart-canvas chart-canvas-md">
+							<canvas id="chartMoodDistribution"></canvas>
 						</div>
 					</div>
-				</section>
+				</div>
 			</div>
-		</div>
+		</section>
+
+		<section class="panel">
+			<div class="panel-header">
+				<div>
+					<div class="panel-title">Task Completion</div>
+					<div class="help">Weekly execution flow + current completion gauge.</div>
+				</div>
+			</div>
+			<div class="panel-body">
+				<div class="analytics-grid-two">
+					<div class="chart-block">
+						<div class="chart-block-title">Tasks added vs completed</div>
+						<div class="chart-canvas chart-canvas-md">
+							<canvas id="chartTaskTrend"></canvas>
+						</div>
+					</div>
+					<div class="chart-block gauge-block">
+						<div class="chart-block-title">Completion rate gauge</div>
+						<div class="gauge-wrap">
+							<svg viewBox="0 0 120 70" aria-label="Completion rate gauge">
+								<path class="gauge-bg" d="M 10 60 A 50 50 0 0 1 110 60"></path>
+								<path class="gauge-value" id="completionGaugeArc" d="M 10 60 A 50 50 0 0 1 110 60"></path>
+							</svg>
+							<div class="gauge-center">
+								<div class="gauge-k" id="completionGaugeValue">0%</div>
+								<div class="help">Completion of tasks created in range</div>
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
+		</section>
+
+		<section class="panel">
+			<div class="panel-header">
+				<div>
+					<div class="panel-title">Insights</div>
+					<div class="help">Auto-generated readouts from your current filter window.</div>
+				</div>
+			</div>
+			<div class="panel-body">
+				<ul class="insight-list" id="analyticsInsights"></ul>
+			</div>
+		</section>
 	</div>
 {% endblock %}
 
 {% block scripts %}
-<script>
-	window.PROCRASTINATION_ANALYTICS = {
-		hourly_data: {{ hourly_data|tojson }},
-		mood_data: {{ mood_data|tojson }},
-		energy_data: {{ energy_data|tojson }},
-		env_data: {{ env_data|tojson }}
-	};
-</script>
+<script id="analytics-dashboard-boot" type="application/json">{{ analytics_data|tojson }}</script>
 {% endblock %}
