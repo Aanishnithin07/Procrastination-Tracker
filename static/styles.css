@@ -1565,7 +1565,7 @@ html[data-theme="light"] .skeleton {
 
 .analytics-kpis {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
     gap: var(--space-3);
 }
 
@@ -1682,6 +1682,18 @@ html[data-theme="light"] .skeleton {
     line-height: 1.45;
 }
 
+.corr-block {
+    display: grid;
+    align-content: center;
+    gap: var(--space-2);
+}
+
+.corr-value {
+    font-size: clamp(2rem, 1.8rem + 1vw, 2.8rem);
+    font-weight: 900;
+    letter-spacing: -0.04em;
+}
+
 @media (max-width: 900px) {
     .analytics-grid-two {
         grid-template-columns: 1fr;
@@ -1689,6 +1701,195 @@ html[data-theme="light"] .skeleton {
 
     .analytics-kpis {
         grid-template-columns: 1fr;
+    }
+}
+
+/* Focus mode */
+body.focus-immersive {
+    background:
+        radial-gradient(1000px 520px at 10% 10%, rgba(108, 99, 255, 0.22), transparent 60%),
+        radial-gradient(900px 500px at 90% 30%, rgba(34, 197, 94, 0.16), transparent 55%),
+        var(--bg);
+}
+
+body.focus-immersive .sidebar,
+body.focus-immersive .header {
+    display: none;
+}
+
+body.focus-immersive .content {
+    padding: 0;
+}
+
+body.focus-immersive .content-inner {
+    max-width: none;
+    margin: 0;
+    padding: min(3.2vh, 24px);
+}
+
+.focus-page {
+    min-height: calc(100vh - 48px);
+    position: relative;
+}
+
+.focus-shell {
+    min-height: calc(100vh - 48px);
+    border-radius: 22px;
+    overflow: hidden;
+}
+
+.focus-header {
+    gap: var(--space-3);
+}
+
+.focus-body {
+    display: grid;
+    grid-template-rows: auto 1fr auto auto auto;
+    align-items: center;
+    justify-items: center;
+    gap: clamp(14px, 2vh, 24px);
+    min-height: calc(100vh - 180px);
+}
+
+.focus-task-row {
+    width: min(640px, 92vw);
+    display: grid;
+    gap: var(--space-2);
+}
+
+.focus-ring-wrap {
+    width: min(460px, 78vw);
+    aspect-ratio: 1 / 1;
+    position: relative;
+    display: grid;
+    place-items: center;
+}
+
+.focus-ring {
+    width: 100%;
+    height: 100%;
+    transform: rotate(-90deg);
+}
+
+.focus-ring-bg {
+    fill: none;
+    stroke: rgba(148, 163, 184, 0.26);
+    stroke-width: 14;
+}
+
+.focus-ring-progress {
+    fill: none;
+    stroke: rgba(108, 99, 255, 0.92);
+    stroke-width: 14;
+    stroke-linecap: round;
+    transition: stroke-dashoffset 180ms linear, stroke 220ms var(--ease);
+}
+
+.focus-ring-progress.is-break {
+    stroke: rgba(34, 197, 94, 0.92);
+}
+
+.focus-timer-core {
+    position: absolute;
+    text-align: center;
+    display: grid;
+    gap: 6px;
+}
+
+.focus-phase {
+    color: var(--muted);
+    letter-spacing: 0.01em;
+}
+
+.focus-time {
+    font-size: clamp(3rem, 2.2rem + 4vw, 5.4rem);
+    line-height: 1;
+    font-weight: 900;
+    letter-spacing: -0.05em;
+}
+
+.focus-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    justify-content: center;
+}
+
+.focus-row-meta {
+    width: min(700px, 92vw);
+    display: flex;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+}
+
+.focus-complete-prompt {
+    width: min(700px, 92vw);
+    border: 1px dashed rgba(34, 197, 94, 0.5);
+    border-radius: var(--radius-lg);
+    background: rgba(34, 197, 94, 0.12);
+    padding: var(--space-4);
+    text-align: center;
+    display: grid;
+    gap: var(--space-2);
+}
+
+.focus-complete-actions {
+    display: flex;
+    gap: var(--space-2);
+    justify-content: center;
+    flex-wrap: wrap;
+}
+
+.focus-status-note {
+    text-align: center;
+    max-width: min(700px, 92vw);
+}
+
+.focus-celebration {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 9999;
+    overflow: hidden;
+}
+
+.focus-confetti {
+    position: absolute;
+    top: -20px;
+    width: 8px;
+    height: 16px;
+    border-radius: 2px;
+    opacity: 0;
+    animation: focus-confetti-fall 1.25s ease-in forwards;
+}
+
+@keyframes focus-confetti-fall {
+    0% {
+        opacity: 0;
+        transform: translateY(-18px) rotate(0deg);
+    }
+    15% {
+        opacity: 1;
+    }
+    100% {
+        opacity: 0;
+        transform: translateY(110vh) rotate(780deg);
+    }
+}
+
+@media (max-width: 900px) {
+    .focus-shell {
+        border-radius: 0;
+    }
+
+    body.focus-immersive .content-inner {
+        padding: 0;
+    }
+
+    .focus-body {
+        min-height: calc(100vh - 140px);
     }
 }
 

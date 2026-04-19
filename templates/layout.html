@@ -48,6 +48,14 @@
 							<span class="nav-label">Tasks</span>
 						</a>
 
+						<a class="nav-item {% if request.path.startswith('/focus') %}is-active{% endif %}" href="/focus">
+							<svg class="nav-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+								<path d="M12 4v16M4 12h16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+								<circle cx="12" cy="12" r="8" stroke="currentColor" stroke-width="1.6" opacity="0.6"/>
+							</svg>
+							<span class="nav-label">Focus</span>
+						</a>
+
 						<a class="nav-item {% if request.path.startswith('/log_procrastination') %}is-active{% endif %}" href="/log_procrastination">
 							<svg class="nav-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
 								<path d="M12 6v6l4 2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>

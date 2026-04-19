@@ -38,6 +38,14 @@
 						<div class="akpi-k" id="summaryCompleted">0</div>
 						<div class="akpi-t">Tasks completed</div>
 					</div>
+					<div class="akpi">
+						<div class="akpi-k" id="summaryFocusMinutes">0</div>
+						<div class="akpi-t">Focus minutes</div>
+					</div>
+					<div class="akpi">
+						<div class="akpi-k" id="summaryFocusSessions">0</div>
+						<div class="akpi-t">Focus sessions</div>
+					</div>
 				</div>
 			</div>
 		</section>
@@ -119,6 +127,30 @@
 								<div class="help">Completion of tasks created in range</div>
 							</div>
 						</div>
+					</div>
+				</div>
+			</div>
+		</section>
+
+		<section class="panel">
+			<div class="panel-header">
+				<div>
+					<div class="panel-title">Focus Correlation</div>
+					<div class="help">How your focused minutes correlate with procrastination volume per day.</div>
+				</div>
+			</div>
+			<div class="panel-body">
+				<div class="analytics-grid-two">
+					<div class="chart-block">
+						<div class="chart-block-title">Focus minutes vs procrastination logs</div>
+						<div class="chart-canvas chart-canvas-md">
+							<canvas id="chartFocusCorrelation"></canvas>
+						</div>
+					</div>
+					<div class="chart-block corr-block">
+						<div class="chart-block-title">Correlation readout</div>
+						<div class="corr-value" id="focusCorrelationValue">0.000</div>
+						<div class="help" id="focusCorrelationText">Not enough signal yet.</div>
 					</div>
 				</div>
 			</div>

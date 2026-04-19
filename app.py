@@ -159,6 +159,9 @@ TASK_STATUS_LABELS = {
     "abandoned": "Abandoned",
 }
 
+WORK_SESSION_STATUSES = {"active", "completed", "abandoned"}
+WORK_SESSION_TYPES = {"focus", "break"}
+
 
 def _get_user_initials(username: str) -> str:
     if not username:
@@ -423,6 +426,118 @@ def _fetch_task_row_for_user(task_id: int, user_id: int):
     return rows[0] if rows else None
 
 
+def _coerce_work_session_status(value) -> str:
+    status = (str(value).strip().lower() if value is not None else "")
+    if status not in WORK_SESSION_STATUSES:
+        return "active"
+    return status
+
+
+def _coerce_work_session_type(value) -> str:
+    session_type = (str(value).strip().lower() if value is not None else "")
+    if session_type not in WORK_SESSION_TYPES:
+        return "focus"
+    return session_type
+
+
+def _duration_minutes_between(start_dt: datetime, end_dt: datetime) -> int:
+    delta_seconds = max(0, int((end_dt - start_dt).total_seconds()))
+    if delta_seconds == 0:
+        return 0
+    return max(1, int((delta_seconds + 59) // 60))
+
+
+def _serialize_work_session(row):
+    if not row:
+        return None
+
+    start_dt = _parse_sqlite_datetime(row.get("start_time"))
+    end_dt = _parse_sqlite_datetime(row.get("end_time"))
+
+    status = _coerce_work_session_status(row.get("status"))
+    session_type = _coerce_work_session_type(row.get("session_type"))
+
+    elapsed_seconds = None
+    if status == "active" and start_dt:
+        elapsed_seconds = max(0, int((datetime.utcnow() - start_dt).total_seconds()))
+
+    duration_minutes = row.get("duration_minutes")
+    try:
+        duration_minutes = int(duration_minutes) if duration_minutes is not None else None
+    except (TypeError, ValueError):
+        duration_minutes = None
+
+    if duration_minutes is None and start_dt and end_dt:
+        duration_minutes = _duration_minutes_between(start_dt, end_dt)
+
+    return {
+        "id": int(row.get("id")),
+        "user_id": int(row.get("user_id")),
+        "task_id": row.get("task_id"),
+        "task_title": row.get("task_title") or "",
+        "start_time": start_dt.isoformat() if start_dt else (row.get("start_time") or ""),
+        "end_time": end_dt.isoformat() if end_dt else (row.get("end_time") or ""),
+        "duration_minutes": duration_minutes,
+        "status": status,
+        "notes": row.get("notes") or "",
+        "session_type": session_type,
+        "created_at": row.get("created_at") or "",
+        "elapsed_seconds": elapsed_seconds,
+    }
+
+
+def _fetch_active_work_session(user_id: int):
+    rows = db.execute(
+        """
+        SELECT
+            ws.id,
+            ws.user_id,
+            ws.task_id,
+            ws.start_time,
+            ws.end_time,
+            ws.duration_minutes,
+            ws.status,
+            ws.notes,
+            ws.session_type,
+            ws.created_at,
+            t.title AS task_title
+        FROM work_sessions ws
+        LEFT JOIN tasks t ON ws.task_id = t.id
+        WHERE ws.user_id = ? AND ws.status = 'active'
+        ORDER BY ws.start_time DESC, ws.id DESC
+        LIMIT 1
+        """,
+        user_id,
+    )
+    return rows[0] if rows else None
+
+
+def _fetch_work_session_by_id(user_id: int, session_id: int):
+    rows = db.execute(
+        """
+        SELECT
+            ws.id,
+            ws.user_id,
+            ws.task_id,
+            ws.start_time,
+            ws.end_time,
+            ws.duration_minutes,
+            ws.status,
+            ws.notes,
+            ws.session_type,
+            ws.created_at,
+            t.title AS task_title
+        FROM work_sessions ws
+        LEFT JOIN tasks t ON ws.task_id = t.id
+        WHERE ws.user_id = ? AND ws.id = ?
+        LIMIT 1
+        """,
+        user_id,
+        session_id,
+    )
+    return rows[0] if rows else None
+
+
 def _parse_iso_date(value):
     if not value:
         return None
@@ -494,6 +609,43 @@ def _time_period(hour: int) -> str:
     return "late night"
 
 
+def _pearson_correlation(xs, ys):
+    if len(xs) != len(ys) or len(xs) < 2:
+        return None
+
+    n = len(xs)
+    sum_x = float(sum(xs))
+    sum_y = float(sum(ys))
+    sum_x2 = float(sum(x * x for x in xs))
+    sum_y2 = float(sum(y * y for y in ys))
+    sum_xy = float(sum(x * y for x, y in zip(xs, ys)))
+
+    numerator = (n * sum_xy) - (sum_x * sum_y)
+    denominator_left = (n * sum_x2) - (sum_x * sum_x)
+    denominator_right = (n * sum_y2) - (sum_y * sum_y)
+    denominator = (denominator_left * denominator_right) ** 0.5
+
+    if denominator <= 0:
+        return None
+
+    correlation = numerator / denominator
+    correlation = max(-1.0, min(1.0, correlation))
+    return round(correlation, 3)
+
+
+def _focus_correlation_interpretation(correlation):
+    if correlation is None:
+        return "Not enough variance yet to measure correlation. Keep logging for another few days."
+
+    if correlation <= -0.45:
+        return "Strong inverse pattern: more focus minutes align with fewer procrastination logs."
+    if correlation <= -0.2:
+        return "Moderate inverse pattern: focus sessions are likely helping reduce procrastination."
+    if correlation < 0.2:
+        return "Weak relationship: your procrastination may be driven more by context than time-on-task."
+    return "Positive relationship detected: long focus blocks might currently coincide with friction spikes."
+
+
 def _generate_analytics_insights(
     weekday_hour_counts,
     mood_counts,
@@ -504,6 +656,9 @@ def _generate_analytics_insights(
     tasks_added_total,
     tasks_completed_total,
     completion_rate,
+    focus_minutes_total,
+    focus_sessions_total,
+    focus_correlation,
 ):
     insights = []
     weekday_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
@@ -539,6 +694,16 @@ def _generate_analytics_insights(
             insights.append("Your completion momentum is strong. Keep your current planning cadence.")
         elif completion_rate <= 40:
             insights.append("Your completion rate is under pressure. Try reducing task scope and prioritizing one must-finish task each day.")
+
+    if focus_sessions_total > 0:
+        insights.append(
+            f"You logged {focus_sessions_total} focus sessions totaling {focus_minutes_total} focused minutes in this window."
+        )
+        if focus_correlation is not None:
+            if focus_correlation <= -0.25:
+                insights.append("Higher focus-minute days tend to coincide with fewer procrastination logs.")
+            elif focus_correlation >= 0.25:
+                insights.append("Your focus minutes and procrastination logs rise together; investigate session quality and interruption load.")
 
     unique = []
     for text in insights:
@@ -639,6 +804,59 @@ def _build_analytics_payload(user_id: int, range_key: str):
         for mood, count in sorted(mood_counts.items(), key=lambda item: item[1], reverse=True)
     ]
 
+    focus_day_rows = db.execute(
+        """
+        SELECT
+            date(start_time) AS day,
+            COUNT(*) AS sessions,
+            COALESCE(SUM(duration_minutes), 0) AS minutes
+        FROM work_sessions
+        WHERE user_id = ?
+          AND session_type = 'focus'
+          AND status = 'completed'
+          AND date(start_time) BETWEEN date(?) AND date(?)
+        GROUP BY date(start_time)
+        """,
+        user_id,
+        start_date.isoformat(),
+        end_date.isoformat(),
+    )
+
+    focus_by_day = {}
+    focus_minutes_total = 0
+    focus_sessions_total = 0
+    for row in focus_day_rows:
+        day = _parse_iso_date(row.get("day"))
+        if not day:
+            continue
+        sessions = int(row.get("sessions") or 0)
+        minutes = int(row.get("minutes") or 0)
+        focus_by_day[day] = {
+            "sessions": sessions,
+            "minutes": minutes,
+        }
+        focus_sessions_total += sessions
+        focus_minutes_total += minutes
+
+    focus_corr_points = []
+    corr_x = []
+    corr_y = []
+    for day in _iter_dates(start_date, end_date):
+        focus_minutes = int(focus_by_day.get(day, {}).get("minutes", 0))
+        logs_count = int(daily_counts.get(day, 0))
+        focus_corr_points.append(
+            {
+                "date": day.isoformat(),
+                "focus_minutes": focus_minutes,
+                "procrastination_logs": logs_count,
+            }
+        )
+        corr_x.append(focus_minutes)
+        corr_y.append(logs_count)
+
+    focus_correlation = _pearson_correlation(corr_x, corr_y)
+    focus_corr_interpretation = _focus_correlation_interpretation(focus_correlation)
+
     created_day_rows = db.execute(
         """
         SELECT date(created_at) AS day, COUNT(*) AS count
@@ -722,6 +940,9 @@ def _build_analytics_payload(user_id: int, range_key: str):
         tasks_added_total=tasks_added_total,
         tasks_completed_total=tasks_completed_total,
         completion_rate=completion_rate,
+        focus_minutes_total=focus_minutes_total,
+        focus_sessions_total=focus_sessions_total,
+        focus_correlation=focus_correlation,
     )
 
     return {
@@ -747,10 +968,19 @@ def _build_analytics_payload(user_id: int, range_key: str):
             "completed": tasks_completed_series,
         },
         "completion_rate": completion_rate,
+        "focus_correlation": {
+            "points": focus_corr_points,
+            "coefficient": focus_correlation,
+            "focus_minutes_total": focus_minutes_total,
+            "focus_sessions_total": focus_sessions_total,
+            "interpretation": focus_corr_interpretation,
+        },
         "summary": {
             "logs_total": len(mood_energy_points),
             "tasks_added_total": tasks_added_total,
             "tasks_completed_total": tasks_completed_total,
+            "focus_minutes_total": focus_minutes_total,
+            "focus_sessions_total": focus_sessions_total,
         },
         "insights": insights,
     }
@@ -864,17 +1094,169 @@ with app.app_context():
     db.execute("""
         CREATE TABLE IF NOT EXISTS work_sessions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            task_id INTEGER NOT NULL,
             user_id INTEGER NOT NULL,
+            task_id INTEGER,
             start_time DATETIME NOT NULL,
             end_time DATETIME,
-            completed BOOLEAN DEFAULT FALSE,
+            duration_minutes INTEGER,
+            status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'completed', 'abandoned')),
             notes TEXT,
+            session_type TEXT NOT NULL DEFAULT 'focus' CHECK (session_type IN ('focus', 'break')),
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (task_id) REFERENCES tasks (id),
             FOREIGN KEY (user_id) REFERENCES users (id)
         )
     """)
+
+    ws_info = db.execute("SELECT name, [notnull] AS is_not_null FROM pragma_table_info('work_sessions')")
+    ws_columns = {col["name"] for col in ws_info}
+    required_ws_columns = {
+        "id",
+        "user_id",
+        "task_id",
+        "start_time",
+        "end_time",
+        "duration_minutes",
+        "status",
+        "notes",
+        "session_type",
+        "created_at",
+    }
+    task_id_not_null = any(
+        col["name"] == "task_id" and int(col.get("is_not_null") or 0) == 1
+        for col in ws_info
+    )
+
+    needs_work_session_rebuild = (
+        "completed" in ws_columns
+        or task_id_not_null
+        or not required_ws_columns.issubset(ws_columns)
+    )
+
+    if needs_work_session_rebuild:
+        db.execute("DROP TABLE IF EXISTS work_sessions_new")
+        db.execute("""
+            CREATE TABLE work_sessions_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                task_id INTEGER,
+                start_time DATETIME NOT NULL,
+                end_time DATETIME,
+                duration_minutes INTEGER,
+                status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'completed', 'abandoned')),
+                notes TEXT,
+                session_type TEXT NOT NULL DEFAULT 'focus' CHECK (session_type IN ('focus', 'break')),
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (task_id) REFERENCES tasks (id),
+                FOREIGN KEY (user_id) REFERENCES users (id)
+            )
+        """)
+
+        old_rows = db.execute("SELECT * FROM work_sessions")
+        now_stamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        for row in old_rows:
+            start_dt = _parse_sqlite_datetime(row.get("start_time"))
+            end_dt = _parse_sqlite_datetime(row.get("end_time"))
+
+            duration_minutes = row.get("duration_minutes")
+            try:
+                duration_minutes = int(duration_minutes) if duration_minutes is not None else None
+            except (TypeError, ValueError):
+                duration_minutes = None
+            if duration_minutes is None and start_dt and end_dt:
+                duration_minutes = _duration_minutes_between(start_dt, end_dt)
+
+            status = row.get("status")
+            if status not in WORK_SESSION_STATUSES:
+                completed_raw = row.get("completed")
+                completed_flag = str(completed_raw).strip().lower() in {"1", "true", "yes"}
+                if completed_flag or row.get("end_time"):
+                    status = "completed"
+                else:
+                    status = "active"
+            status = _coerce_work_session_status(status)
+            if status == "active" and row.get("end_time"):
+                status = "completed"
+
+            session_type = _coerce_work_session_type(row.get("session_type"))
+
+            task_id = row.get("task_id")
+            if task_id in ("", 0, "0"):
+                task_id = None
+
+            db.execute(
+                """
+                INSERT INTO work_sessions_new (
+                    id,
+                    user_id,
+                    task_id,
+                    start_time,
+                    end_time,
+                    duration_minutes,
+                    status,
+                    notes,
+                    session_type,
+                    created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                row.get("id"),
+                row.get("user_id"),
+                task_id,
+                row.get("start_time") or now_stamp,
+                row.get("end_time"),
+                duration_minutes,
+                status,
+                row.get("notes"),
+                session_type,
+                row.get("created_at") or row.get("start_time") or now_stamp,
+            )
+
+        db.execute("DROP TABLE work_sessions")
+        db.execute("ALTER TABLE work_sessions_new RENAME TO work_sessions")
+
+    db.execute(
+        """
+        UPDATE work_sessions
+        SET status = 'completed'
+        WHERE end_time IS NOT NULL
+          AND (status IS NULL OR status = '' OR status = 'active')
+        """
+    )
+    db.execute(
+        """
+        UPDATE work_sessions
+        SET status = 'active'
+        WHERE status IS NULL OR status = ''
+        """
+    )
+    db.execute(
+        """
+        UPDATE work_sessions
+        SET session_type = 'focus'
+        WHERE session_type IS NULL OR session_type NOT IN ('focus', 'break')
+        """
+    )
+    db.execute(
+        """
+        UPDATE work_sessions
+        SET duration_minutes = MAX(0, CAST((julianday(end_time) - julianday(start_time)) * 1440 AS INTEGER))
+        WHERE end_time IS NOT NULL
+          AND (duration_minutes IS NULL OR duration_minutes < 0)
+        """
+    )
+    db.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_work_sessions_user_status
+        ON work_sessions (user_id, status)
+        """
+    )
+    db.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_work_sessions_user_start
+        ON work_sessions (user_id, start_time)
+        """
+    )
     
     # Procrastination logs table
     db.execute("""
@@ -1591,6 +1973,313 @@ def log_procrastination():
         trigger_options=WIZARD_TRIGGER_OPTIONS,
         environment_options=WIZARD_ENV_OPTIONS,
         logged=False,
+    )
+
+
+@app.route("/focus")
+@login_required
+def focus():
+    """Immersive focus mode page with Pomodoro controls and persistence boot data."""
+    user_id = session["user_id"]
+
+    tasks = db.execute(
+        """
+        SELECT id, title, status, importance, estimated_time, deadline
+        FROM tasks
+        WHERE user_id = ? AND status IN ('pending', 'in_progress')
+        ORDER BY
+            CASE status WHEN 'in_progress' THEN 0 ELSE 1 END,
+            importance DESC,
+            deadline ASC,
+            id DESC
+        """,
+        user_id,
+    )
+
+    active_session = _fetch_active_work_session(user_id)
+    focus_boot = {
+        "active_session": _serialize_work_session(active_session),
+        "pomodoro": {
+            "focus_seconds": 25 * 60,
+            "short_break_seconds": 5 * 60,
+            "long_break_seconds": 15 * 60,
+            "cycle_length": 4,
+        },
+    }
+
+    return render_template("focus.html", focus_tasks=tasks, focus_boot=focus_boot)
+
+
+@app.route("/sessions/start", methods=["POST"])
+@login_required
+def sessions_start():
+    """Create a new active work session for the current user."""
+    user_id = session["user_id"]
+    payload = request.get_json(silent=True) or {}
+
+    task_id_raw = payload.get("task_id", request.form.get("task_id"))
+    notes_raw = payload.get("notes", request.form.get("notes"))
+    session_type_raw = payload.get("session_type", request.form.get("session_type", "focus"))
+    session_type = _coerce_work_session_type(session_type_raw)
+
+    active = _fetch_active_work_session(user_id)
+    if active:
+        return jsonify(
+            {
+                "ok": False,
+                "error": "An active session already exists",
+                "active_session": _serialize_work_session(active),
+            }
+        ), 409
+
+    task_id = None
+    if task_id_raw not in (None, ""):
+        try:
+            task_id = int(task_id_raw)
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "Invalid task id"}), 400
+
+        task_rows = db.execute(
+            """
+            SELECT id
+            FROM tasks
+            WHERE id = ? AND user_id = ?
+            LIMIT 1
+            """,
+            task_id,
+            user_id,
+        )
+        if not task_rows:
+            return jsonify({"ok": False, "error": "Task not found"}), 404
+
+    notes = (str(notes_raw).strip() if notes_raw is not None else "")
+    notes_value = notes if notes else None
+
+    session_id = db.execute(
+        """
+        INSERT INTO work_sessions (user_id, task_id, start_time, status, notes, session_type)
+        VALUES (?, ?, datetime('now'), 'active', ?, ?)
+        """,
+        user_id,
+        task_id,
+        notes_value,
+        session_type,
+    )
+
+    created = _fetch_work_session_by_id(user_id, session_id)
+    return jsonify(
+        {
+            "ok": True,
+            "session_id": session_id,
+            "session": _serialize_work_session(created),
+        }
+    ), 201
+
+
+@app.route("/sessions/stop", methods=["POST"])
+@login_required
+def sessions_stop():
+    """Stop the user's active session and persist duration."""
+    user_id = session["user_id"]
+    payload = request.get_json(silent=True) or {}
+
+    session_id_raw = payload.get("session_id", request.form.get("session_id"))
+    notes_raw = payload.get("notes", request.form.get("notes"))
+    notes = (str(notes_raw).strip() if notes_raw is not None else "")
+
+    target = None
+    if session_id_raw not in (None, ""):
+        try:
+            session_id = int(session_id_raw)
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "Invalid session id"}), 400
+        target = _fetch_work_session_by_id(user_id, session_id)
+        if not target:
+            return jsonify({"ok": False, "error": "Session not found"}), 404
+        if _coerce_work_session_status(target.get("status")) != "active":
+            return jsonify({"ok": False, "error": "Session is not active"}), 400
+    else:
+        target = _fetch_active_work_session(user_id)
+        if not target:
+            return jsonify({"ok": False, "error": "No active session"}), 404
+
+    now_dt = datetime.utcnow()
+    start_dt = _parse_sqlite_datetime(target.get("start_time"))
+    duration_minutes = _duration_minutes_between(start_dt, now_dt) if start_dt else 0
+
+    if notes:
+        db.execute(
+            """
+            UPDATE work_sessions
+            SET end_time = datetime('now'),
+                duration_minutes = ?,
+                status = 'completed',
+                notes = ?
+            WHERE id = ? AND user_id = ?
+            """,
+            duration_minutes,
+            notes,
+            target["id"],
+            user_id,
+        )
+    else:
+        db.execute(
+            """
+            UPDATE work_sessions
+            SET end_time = datetime('now'),
+                duration_minutes = ?,
+                status = 'completed'
+            WHERE id = ? AND user_id = ?
+            """,
+            duration_minutes,
+            target["id"],
+            user_id,
+        )
+
+    updated = _fetch_work_session_by_id(user_id, target["id"])
+    return jsonify({"ok": True, "session": _serialize_work_session(updated)})
+
+
+@app.route("/sessions/abandon", methods=["POST"])
+@login_required
+def sessions_abandon():
+    """Mark active session as abandoned and persist elapsed duration."""
+    user_id = session["user_id"]
+    payload = request.get_json(silent=True) or {}
+
+    session_id_raw = payload.get("session_id", request.form.get("session_id"))
+    notes_raw = payload.get("notes", request.form.get("notes"))
+    notes = (str(notes_raw).strip() if notes_raw is not None else "")
+
+    target = None
+    if session_id_raw not in (None, ""):
+        try:
+            session_id = int(session_id_raw)
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "Invalid session id"}), 400
+        target = _fetch_work_session_by_id(user_id, session_id)
+        if not target:
+            return jsonify({"ok": False, "error": "Session not found"}), 404
+        if _coerce_work_session_status(target.get("status")) != "active":
+            return jsonify({"ok": False, "error": "Session is not active"}), 400
+    else:
+        target = _fetch_active_work_session(user_id)
+        if not target:
+            return jsonify({"ok": False, "error": "No active session"}), 404
+
+    now_dt = datetime.utcnow()
+    start_dt = _parse_sqlite_datetime(target.get("start_time"))
+    duration_minutes = _duration_minutes_between(start_dt, now_dt) if start_dt else 0
+
+    if notes:
+        db.execute(
+            """
+            UPDATE work_sessions
+            SET end_time = datetime('now'),
+                duration_minutes = ?,
+                status = 'abandoned',
+                notes = ?
+            WHERE id = ? AND user_id = ?
+            """,
+            duration_minutes,
+            notes,
+            target["id"],
+            user_id,
+        )
+    else:
+        db.execute(
+            """
+            UPDATE work_sessions
+            SET end_time = datetime('now'),
+                duration_minutes = ?,
+                status = 'abandoned'
+            WHERE id = ? AND user_id = ?
+            """,
+            duration_minutes,
+            target["id"],
+            user_id,
+        )
+
+    updated = _fetch_work_session_by_id(user_id, target["id"])
+    return jsonify({"ok": True, "session": _serialize_work_session(updated)})
+
+
+@app.route("/sessions/active")
+@login_required
+def sessions_active():
+    """Return current active session for refresh persistence on focus mode."""
+    active = _fetch_active_work_session(session["user_id"])
+    return jsonify({"ok": True, "active_session": _serialize_work_session(active)})
+
+
+@app.route("/sessions/history")
+@login_required
+def sessions_history():
+    """Return paginated history of completed/abandoned work sessions."""
+    user_id = session["user_id"]
+
+    try:
+        page = max(1, int(request.args.get("page", 1)))
+    except (TypeError, ValueError):
+        page = 1
+
+    try:
+        per_page = int(request.args.get("per_page", 10))
+    except (TypeError, ValueError):
+        per_page = 10
+    per_page = max(1, min(50, per_page))
+
+    offset = (page - 1) * per_page
+
+    total = db.execute(
+        """
+        SELECT COUNT(*) AS count
+        FROM work_sessions
+        WHERE user_id = ? AND status IN ('completed', 'abandoned')
+        """,
+        user_id,
+    )[0]["count"]
+
+    rows = db.execute(
+        """
+        SELECT
+            ws.id,
+            ws.user_id,
+            ws.task_id,
+            ws.start_time,
+            ws.end_time,
+            ws.duration_minutes,
+            ws.status,
+            ws.notes,
+            ws.session_type,
+            ws.created_at,
+            t.title AS task_title
+        FROM work_sessions ws
+        LEFT JOIN tasks t ON ws.task_id = t.id
+        WHERE ws.user_id = ?
+          AND ws.status IN ('completed', 'abandoned')
+        ORDER BY datetime(COALESCE(ws.end_time, ws.start_time)) DESC, ws.id DESC
+        LIMIT ? OFFSET ?
+        """,
+        user_id,
+        per_page,
+        offset,
+    )
+
+    sessions_payload = [_serialize_work_session(row) for row in rows]
+    has_next = (offset + len(sessions_payload)) < int(total)
+
+    return jsonify(
+        {
+            "ok": True,
+            "sessions": sessions_payload,
+            "pagination": {
+                "page": page,
+                "per_page": per_page,
+                "total": int(total),
+                "has_next": has_next,
+            },
+        }
     )
 
 

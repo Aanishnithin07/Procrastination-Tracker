@@ -709,6 +709,720 @@ document.addEventListener('DOMContentLoaded', () => {
 		applyFiltersAndSort();
 	}
 
+	// Focus mode page
+	const focusRoot = document.getElementById('focusPage');
+	const focusBootNode = document.getElementById('focus-boot');
+	let focusBoot = null;
+	if (focusBootNode) {
+		try {
+			focusBoot = JSON.parse(focusBootNode.textContent || '{}');
+		} catch {
+			focusBoot = null;
+		}
+	}
+
+	if (focusRoot) {
+		document.body.classList.add('focus-immersive');
+
+		const csrfToken = focusRoot.getAttribute('data-csrf') || '';
+		const taskSelect = document.getElementById('focusTaskSelect');
+		const cycleCounter = document.getElementById('focusCycleCounter');
+		const ringProgress = document.getElementById('focusRingProgress');
+		const timeDisplay = document.getElementById('focusTimeDisplay');
+		const phaseLabel = document.getElementById('focusPhaseLabel');
+		const statusNote = document.getElementById('focusStatusNote');
+
+		const startBtn = document.getElementById('focusStartBtn');
+		const pauseBtn = document.getElementById('focusPauseBtn');
+		const skipBtn = document.getElementById('focusSkipBtn');
+		const abandonBtn = document.getElementById('focusAbandonBtn');
+		const soundBtn = document.getElementById('focusSoundToggle');
+
+		const completionPrompt = document.getElementById('focusCompletionPrompt');
+		const completeYesBtn = document.getElementById('focusTaskDoneYes');
+		const completeNoBtn = document.getElementById('focusTaskDoneNo');
+		const celebrationLayer = document.getElementById('focusCelebration');
+
+		const pomodoro = (focusBoot && focusBoot.pomodoro) || {};
+		const config = {
+			focusSeconds: safeParseInt(pomodoro.focus_seconds, 25 * 60),
+			shortBreakSeconds: safeParseInt(pomodoro.short_break_seconds, 5 * 60),
+			longBreakSeconds: safeParseInt(pomodoro.long_break_seconds, 15 * 60),
+			cycleLength: Math.max(1, safeParseInt(pomodoro.cycle_length, 4)),
+		};
+
+		const storageKey = 'focusModeState.v1';
+		const ringCircumference = 2 * Math.PI * 96;
+
+		const state = {
+			sessionId: null,
+			sessionType: 'focus',
+			focusCountInCycle: 0,
+			totalSeconds: config.focusSeconds,
+			remainingSeconds: config.focusSeconds,
+			running: false,
+			paused: false,
+			startedAtMs: null,
+			startedRemainingSeconds: config.focusSeconds,
+			timerHandle: null,
+			isCompleting: false,
+			soundEnabled: false,
+			audioContext: null,
+			brownNoise: null,
+		};
+
+		const inFocusSession = () => state.sessionType === 'focus';
+
+		const readPersistedState = () => {
+			try {
+				const raw = window.localStorage.getItem(storageKey);
+				if (!raw) return null;
+				const parsed = JSON.parse(raw);
+				return parsed && typeof parsed === 'object' ? parsed : null;
+			} catch {
+				return null;
+			}
+		};
+
+		const persistState = () => {
+			try {
+				const payload = {
+					sessionId: state.sessionId,
+					sessionType: state.sessionType,
+					focusCountInCycle: state.focusCountInCycle,
+					totalSeconds: state.totalSeconds,
+					remainingSeconds: state.remainingSeconds,
+					running: state.running,
+					paused: state.paused,
+					startedAtMs: state.startedAtMs,
+					startedRemainingSeconds: state.startedRemainingSeconds,
+					taskId: taskSelect ? (taskSelect.value || '') : '',
+				};
+				window.localStorage.setItem(storageKey, JSON.stringify(payload));
+			} catch {
+				// ignore storage failures
+			}
+		};
+
+		const clearPersistedState = () => {
+			try {
+				window.localStorage.removeItem(storageKey);
+			} catch {
+				// ignore
+			}
+		};
+
+		const minutesLabel = (minutes) => {
+			const n = Math.max(0, safeParseInt(minutes, 0));
+			return `${n} minute${n === 1 ? '' : 's'}`;
+		};
+
+		const formatClock = (secondsValue) => {
+			const clamped = Math.max(0, safeParseInt(secondsValue, 0));
+			const minutes = Math.floor(clamped / 60);
+			const seconds = clamped % 60;
+			return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+		};
+
+		const updateCounterLabel = () => {
+			if (!cycleCounter) return;
+			const nextFocus = Math.min(config.cycleLength, Math.max(1, state.focusCountInCycle + 1));
+			cycleCounter.textContent = `Focus ${nextFocus} of ${config.cycleLength}`;
+		};
+
+		const updateTimerVisual = () => {
+			if (timeDisplay) {
+				timeDisplay.textContent = formatClock(state.remainingSeconds);
+			}
+
+			if (phaseLabel) {
+				if (inFocusSession()) {
+					phaseLabel.textContent = state.running ? 'Focus session' : (state.paused ? 'Focus paused' : 'Focus session');
+				} else {
+					const isLong = state.focusCountInCycle >= config.cycleLength;
+					const label = isLong ? 'Long break' : 'Short break';
+					phaseLabel.textContent = state.running ? label : `${label} ready`;
+				}
+			}
+
+			if (ringProgress) {
+				ringProgress.style.strokeDasharray = `${ringCircumference}`;
+				const denom = Math.max(1, state.totalSeconds);
+				const progress = 1 - (Math.max(0, state.remainingSeconds) / denom);
+				const clamped = Math.max(0, Math.min(1, progress));
+				ringProgress.style.strokeDashoffset = `${ringCircumference * (1 - clamped)}`;
+				ringProgress.classList.toggle('is-break', !inFocusSession());
+			}
+
+			updateCounterLabel();
+		};
+
+		const updateControls = () => {
+			const hasActiveSession = !!state.sessionId;
+			if (startBtn) {
+				startBtn.disabled = state.running;
+				startBtn.textContent = state.paused ? 'Resume' : 'Start';
+			}
+			if (pauseBtn) pauseBtn.disabled = !state.running;
+			if (skipBtn) skipBtn.disabled = !hasActiveSession;
+			if (abandonBtn) abandonBtn.disabled = !hasActiveSession;
+			if (taskSelect) taskSelect.disabled = hasActiveSession;
+		};
+
+		const setStatus = (message) => {
+			if (statusNote) statusNote.textContent = message;
+		};
+
+		const beginTicker = () => {
+			if (state.timerHandle) {
+				window.clearInterval(state.timerHandle);
+				state.timerHandle = null;
+			}
+
+			const tick = () => {
+				if (!state.running) return;
+
+				const elapsed = Math.floor((Date.now() - (state.startedAtMs || Date.now())) / 1000);
+				state.remainingSeconds = Math.max(0, state.startedRemainingSeconds - elapsed);
+				updateTimerVisual();
+				persistState();
+
+				if (state.remainingSeconds <= 0) {
+					window.clearInterval(state.timerHandle);
+					state.timerHandle = null;
+					state.running = false;
+					state.paused = false;
+					finalizeCurrentSegment(true);
+				}
+			};
+
+			state.timerHandle = window.setInterval(tick, 250);
+			tick();
+		};
+
+		const pauseTicker = () => {
+			if (!state.running) return;
+			const elapsed = Math.floor((Date.now() - (state.startedAtMs || Date.now())) / 1000);
+			state.remainingSeconds = Math.max(0, state.startedRemainingSeconds - elapsed);
+			state.running = false;
+			state.paused = true;
+
+			if (state.timerHandle) {
+				window.clearInterval(state.timerHandle);
+				state.timerHandle = null;
+			}
+
+			setStatus('Paused. Press Space or Resume when ready.');
+			updateTimerVisual();
+			updateControls();
+			persistState();
+		};
+
+		const resumeTicker = () => {
+			state.startedAtMs = Date.now();
+			state.startedRemainingSeconds = state.remainingSeconds;
+			state.running = true;
+			state.paused = false;
+			setStatus(`Running ${inFocusSession() ? 'focus' : 'break'} block.`);
+			updateControls();
+			persistState();
+			beginTicker();
+		};
+
+		const applyServerSession = (sessionPayload, persisted) => {
+			if (!sessionPayload) return;
+
+			state.sessionId = safeParseInt(sessionPayload.id, null);
+			state.sessionType = (sessionPayload.session_type === 'break') ? 'break' : 'focus';
+
+			if (persisted && safeParseInt(persisted.sessionId, null) === state.sessionId) {
+				state.focusCountInCycle = Math.max(0, safeParseInt(persisted.focusCountInCycle, 0));
+				state.totalSeconds = Math.max(1, safeParseInt(persisted.totalSeconds, state.sessionType === 'focus' ? config.focusSeconds : config.shortBreakSeconds));
+				state.remainingSeconds = Math.max(0, safeParseInt(persisted.remainingSeconds, state.totalSeconds));
+				state.running = !!persisted.running;
+				state.paused = !!persisted.paused;
+				state.startedAtMs = safeParseInt(persisted.startedAtMs, Date.now());
+				state.startedRemainingSeconds = Math.max(1, safeParseInt(persisted.startedRemainingSeconds, state.totalSeconds));
+
+				if (taskSelect && persisted.taskId) {
+					taskSelect.value = String(persisted.taskId);
+				}
+			} else {
+				const elapsed = Math.max(0, safeParseInt(sessionPayload.elapsed_seconds, 0));
+				const fallbackTotal = state.sessionType === 'focus' ? config.focusSeconds : config.shortBreakSeconds;
+				state.totalSeconds = fallbackTotal;
+				state.remainingSeconds = Math.max(0, fallbackTotal - elapsed);
+				state.startedAtMs = Date.now() - (elapsed * 1000);
+				state.startedRemainingSeconds = fallbackTotal;
+				state.running = state.remainingSeconds > 0;
+				state.paused = false;
+				if (taskSelect && sessionPayload.task_id) {
+					taskSelect.value = String(sessionPayload.task_id);
+				}
+			}
+		};
+
+		const startSessionOnServer = async () => {
+			const selectedTask = taskSelect ? (taskSelect.value || null) : null;
+			const res = await fetch('/sessions/start', {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+					'X-CSRF-Token': csrfToken,
+					Accept: 'application/json',
+				},
+				body: JSON.stringify({
+					task_id: selectedTask,
+					session_type: state.sessionType,
+				}),
+			});
+
+			let data = {};
+			try {
+				data = await res.json();
+			} catch {
+				data = {};
+			}
+
+			if (res.status === 409 && data.active_session) {
+				applyServerSession(data.active_session, readPersistedState());
+				setStatus('Resumed your existing active session.');
+				updateTimerVisual();
+				updateControls();
+				persistState();
+				if (state.running && !state.paused) beginTicker();
+				return;
+			}
+
+			if (!res.ok || !data.ok || !data.session) {
+				throw new Error(data.error || 'Could not start session');
+			}
+
+			applyServerSession(data.session, readPersistedState());
+		};
+
+		const stopSessionOnServer = async () => {
+			if (!state.sessionId) return null;
+
+			const res = await fetch('/sessions/stop', {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+					'X-CSRF-Token': csrfToken,
+					Accept: 'application/json',
+				},
+				body: JSON.stringify({ session_id: state.sessionId }),
+			});
+
+			let data = {};
+			try {
+				data = await res.json();
+			} catch {
+				data = {};
+			}
+
+			if (!res.ok || !data.ok) {
+				throw new Error(data.error || 'Could not stop session');
+			}
+
+			return data.session || null;
+		};
+
+		const abandonSessionOnServer = async () => {
+			if (!state.sessionId) return null;
+
+			const res = await fetch('/sessions/abandon', {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+					'X-CSRF-Token': csrfToken,
+					Accept: 'application/json',
+				},
+				body: JSON.stringify({ session_id: state.sessionId }),
+			});
+
+			let data = {};
+			try {
+				data = await res.json();
+			} catch {
+				data = {};
+			}
+
+			if (!res.ok || !data.ok) {
+				throw new Error(data.error || 'Could not abandon session');
+			}
+
+			return data.session || null;
+		};
+
+		const markSelectedTaskComplete = async () => {
+			if (!taskSelect || !taskSelect.value) {
+				completionPrompt.hidden = true;
+				return;
+			}
+
+			const fd = new FormData();
+			fd.set('action', 'complete_task');
+			fd.set('task_id', String(taskSelect.value));
+			fd.set('csrf_token', csrfToken);
+
+			const res = await fetch('/tasks', {
+				method: 'POST',
+				headers: {
+					'X-Requested-With': 'XMLHttpRequest',
+					'X-CSRF-Token': csrfToken,
+					Accept: 'application/json',
+				},
+				body: fd,
+			});
+
+			let data = {};
+			try {
+				data = await res.json();
+			} catch {
+				data = {};
+			}
+
+			if (!res.ok || !data.ok) {
+				throw new Error(data.error || 'Could not mark task complete');
+			}
+
+			toast('Task marked complete.', 'success', 'Focus mode');
+			completionPrompt.hidden = true;
+		};
+
+		const runCelebration = () => {
+			if (!celebrationLayer) return;
+			celebrationLayer.innerHTML = '';
+			const colors = ['#6C63FF', '#22C55E', '#3B82F6', '#F59E0B', '#EF4444'];
+			for (let i = 0; i < 28; i += 1) {
+				const shard = document.createElement('span');
+				shard.className = 'focus-confetti';
+				shard.style.left = `${Math.random() * 100}%`;
+				shard.style.background = colors[i % colors.length];
+				shard.style.animationDelay = `${Math.random() * 0.25}s`;
+				shard.style.transform = `translateY(-10px) rotate(${Math.random() * 360}deg)`;
+				celebrationLayer.appendChild(shard);
+			}
+			window.setTimeout(() => {
+				if (celebrationLayer) celebrationLayer.innerHTML = '';
+			}, 1700);
+		};
+
+		const stopAmbient = () => {
+			if (state.brownNoise) {
+				try { state.brownNoise.source.stop(); } catch { /* ignore */ }
+				try { state.brownNoise.source.disconnect(); } catch { /* ignore */ }
+				try { state.brownNoise.gain.disconnect(); } catch { /* ignore */ }
+				state.brownNoise = null;
+			}
+			state.soundEnabled = false;
+			if (soundBtn) {
+				soundBtn.textContent = 'Ambient sound: Off';
+				soundBtn.setAttribute('aria-pressed', 'false');
+			}
+		};
+
+		const startAmbient = async () => {
+			const AudioCtx = window.AudioContext || window.webkitAudioContext;
+			if (!AudioCtx) {
+				toast('Web Audio API is unavailable in this browser.', 'warning', 'Focus mode');
+				return;
+			}
+
+			if (!state.audioContext) {
+				state.audioContext = new AudioCtx();
+			}
+
+			await state.audioContext.resume();
+
+			if (!state.brownNoise) {
+				const sampleRate = state.audioContext.sampleRate;
+				const frameCount = sampleRate * 2;
+				const buffer = state.audioContext.createBuffer(1, frameCount, sampleRate);
+				const data = buffer.getChannelData(0);
+				let lastOut = 0;
+				for (let i = 0; i < frameCount; i += 1) {
+					const white = (Math.random() * 2) - 1;
+					const brown = (lastOut + (0.02 * white)) / 1.02;
+					lastOut = brown;
+					data[i] = brown * 3.5;
+				}
+
+				const source = state.audioContext.createBufferSource();
+				source.buffer = buffer;
+				source.loop = true;
+
+				const filter = state.audioContext.createBiquadFilter();
+				filter.type = 'lowpass';
+				filter.frequency.value = 340;
+
+				const gain = state.audioContext.createGain();
+				gain.gain.value = 0.045;
+
+				source.connect(filter);
+				filter.connect(gain);
+				gain.connect(state.audioContext.destination);
+				source.start();
+
+				state.brownNoise = { source, gain };
+			}
+
+			state.soundEnabled = true;
+			if (soundBtn) {
+				soundBtn.textContent = 'Ambient sound: On';
+				soundBtn.setAttribute('aria-pressed', 'true');
+			}
+		};
+
+		const setNextSegment = (completedType) => {
+			if (completedType === 'focus') {
+				state.focusCountInCycle = Math.min(config.cycleLength, state.focusCountInCycle + 1);
+				state.sessionType = 'break';
+				state.totalSeconds = (state.focusCountInCycle >= config.cycleLength)
+					? config.longBreakSeconds
+					: config.shortBreakSeconds;
+				state.remainingSeconds = state.totalSeconds;
+				setStatus(`Focus block logged. Break ready for ${minutesLabel(Math.floor(state.totalSeconds / 60))}.`);
+				return;
+			}
+
+			if (state.focusCountInCycle >= config.cycleLength) {
+				state.focusCountInCycle = 0;
+			}
+			state.sessionType = 'focus';
+			state.totalSeconds = config.focusSeconds;
+			state.remainingSeconds = config.focusSeconds;
+			setStatus('Break logged. Ready for the next focus block.');
+		};
+
+		const finalizeCurrentSegment = async (showCompletionPrompt) => {
+			if (state.isCompleting || !state.sessionId) return;
+			state.isCompleting = true;
+
+			const completedType = state.sessionType;
+			try {
+				const completedSession = await stopSessionOnServer();
+				state.sessionId = null;
+				state.running = false;
+				state.paused = false;
+				state.startedAtMs = null;
+				state.startedRemainingSeconds = state.totalSeconds;
+
+				setNextSegment(completedType);
+				updateTimerVisual();
+				updateControls();
+
+				if (completedType === 'focus') {
+					runCelebration();
+					if (completionPrompt) completionPrompt.hidden = !showCompletionPrompt;
+					const mins = completedSession && completedSession.duration_minutes;
+					toast(`Focus session logged (${minutesLabel(mins)}).`, 'success', 'Focus mode');
+				} else {
+					if (completionPrompt) completionPrompt.hidden = true;
+					const mins = completedSession && completedSession.duration_minutes;
+					toast(`Break session logged (${minutesLabel(mins)}).`, 'info', 'Focus mode');
+				}
+			} catch (err) {
+				toast(err.message || 'Could not close session.', 'danger', 'Focus mode');
+			} finally {
+				state.isCompleting = false;
+				persistState();
+			}
+		};
+
+		const startOrResume = async () => {
+			if (state.running) return;
+
+			if (!state.sessionId) {
+				try {
+					await startSessionOnServer();
+				} catch (err) {
+					toast(err.message || 'Could not start session.', 'danger', 'Focus mode');
+					return;
+				}
+			}
+
+			if (completionPrompt) completionPrompt.hidden = true;
+			resumeTicker();
+		};
+
+		const skipCurrent = async () => {
+			if (!state.sessionId) return;
+			if (state.timerHandle) {
+				window.clearInterval(state.timerHandle);
+				state.timerHandle = null;
+			}
+			state.running = false;
+			state.paused = false;
+			setStatus('Skipping current session...');
+			await finalizeCurrentSegment(false);
+		};
+
+		const abandonCurrent = async () => {
+			if (!state.sessionId) return;
+			if (!window.confirm('Abandon this session?')) return;
+
+			if (state.timerHandle) {
+				window.clearInterval(state.timerHandle);
+				state.timerHandle = null;
+			}
+
+			state.running = false;
+			state.paused = false;
+			try {
+				await abandonSessionOnServer();
+				toast('Session abandoned.', 'warning', 'Focus mode');
+			} catch (err) {
+				toast(err.message || 'Could not abandon session.', 'danger', 'Focus mode');
+			}
+
+			state.sessionId = null;
+			state.sessionType = 'focus';
+			state.totalSeconds = config.focusSeconds;
+			state.remainingSeconds = config.focusSeconds;
+			state.startedAtMs = null;
+			state.startedRemainingSeconds = config.focusSeconds;
+			if (completionPrompt) completionPrompt.hidden = true;
+			setStatus('Session abandoned. Reset and begin again when ready.');
+			updateTimerVisual();
+			updateControls();
+			persistState();
+		};
+
+		const syncWithActiveSession = async (persisted) => {
+			const res = await fetch('/sessions/active', { headers: { Accept: 'application/json' } });
+			if (!res.ok) return;
+
+			let data = {};
+			try {
+				data = await res.json();
+			} catch {
+				data = {};
+			}
+
+			if (!data.ok || !data.active_session) {
+				if (persisted && persisted.sessionId) clearPersistedState();
+				return;
+			}
+
+			applyServerSession(data.active_session, persisted);
+
+			if (state.remainingSeconds <= 0) {
+				await finalizeCurrentSegment(false);
+			}
+		};
+
+		if (startBtn) {
+			startBtn.addEventListener('click', () => {
+				startOrResume();
+			});
+		}
+
+		if (pauseBtn) {
+			pauseBtn.addEventListener('click', () => {
+				pauseTicker();
+			});
+		}
+
+		if (skipBtn) {
+			skipBtn.addEventListener('click', () => {
+				skipCurrent();
+			});
+		}
+
+		if (abandonBtn) {
+			abandonBtn.addEventListener('click', () => {
+				abandonCurrent();
+			});
+		}
+
+		if (soundBtn) {
+			soundBtn.addEventListener('click', async () => {
+				try {
+					if (state.soundEnabled) {
+						stopAmbient();
+					} else {
+						await startAmbient();
+					}
+				} catch {
+					toast('Could not toggle ambient sound.', 'danger', 'Focus mode');
+				}
+			});
+		}
+
+		if (completeYesBtn) {
+			completeYesBtn.addEventListener('click', async () => {
+				try {
+					await markSelectedTaskComplete();
+				} catch (err) {
+					toast(err.message || 'Could not update task.', 'danger', 'Focus mode');
+				}
+			});
+		}
+
+		if (completeNoBtn) {
+			completeNoBtn.addEventListener('click', () => {
+				if (completionPrompt) completionPrompt.hidden = true;
+			});
+		}
+
+		document.addEventListener('keydown', (e) => {
+			if (!focusRoot) return;
+			const tag = (document.activeElement && document.activeElement.tagName
+				? document.activeElement.tagName.toLowerCase()
+				: '');
+			if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+
+			if (e.code === 'Space') {
+				e.preventDefault();
+				if (state.running) {
+					pauseTicker();
+				} else {
+					startOrResume();
+				}
+			}
+
+			if (e.key === 'Escape' && state.sessionId) {
+				e.preventDefault();
+				abandonCurrent();
+			}
+		});
+
+		const initFocus = async () => {
+			const persisted = readPersistedState();
+			if (persisted && taskSelect && persisted.taskId) {
+				taskSelect.value = String(persisted.taskId);
+			}
+
+			const bootActive = focusBoot && focusBoot.active_session;
+			if (bootActive) {
+				applyServerSession(bootActive, persisted);
+			}
+
+			await syncWithActiveSession(persisted);
+
+			if (state.running && !state.paused) {
+				beginTicker();
+			}
+
+			if (!state.sessionId) {
+				state.sessionType = 'focus';
+				state.totalSeconds = config.focusSeconds;
+				state.remainingSeconds = config.focusSeconds;
+			}
+
+			setStatus(state.sessionId ? 'Session restored.' : 'Ready when you are.');
+			updateTimerVisual();
+			updateControls();
+			persistState();
+		};
+
+		updateTimerVisual();
+		updateControls();
+		initFocus();
+	}
+
 	// Analytics insight dashboard
 	const analyticsRoot = document.getElementById('analyticsDashboard');
 	const analyticsBootNode = document.getElementById('analytics-dashboard-boot');
@@ -732,8 +1446,12 @@ document.addEventListener('DOMContentLoaded', () => {
 		const summaryLogs = document.getElementById('summaryLogs');
 		const summaryAdded = document.getElementById('summaryAdded');
 		const summaryCompleted = document.getElementById('summaryCompleted');
+		const summaryFocusMinutes = document.getElementById('summaryFocusMinutes');
+		const summaryFocusSessions = document.getElementById('summaryFocusSessions');
 		const gaugeArc = document.getElementById('completionGaugeArc');
 		const gaugeValue = document.getElementById('completionGaugeValue');
+		const focusCorrelationValue = document.getElementById('focusCorrelationValue');
+		const focusCorrelationText = document.getElementById('focusCorrelationText');
 
 		const charts = {};
 		const moodPalette = {
@@ -787,6 +1505,8 @@ document.addEventListener('DOMContentLoaded', () => {
 			if (summaryLogs) summaryLogs.textContent = String(safeParseInt(summary.logs_total, 0));
 			if (summaryAdded) summaryAdded.textContent = String(safeParseInt(summary.tasks_added_total, 0));
 			if (summaryCompleted) summaryCompleted.textContent = String(safeParseInt(summary.tasks_completed_total, 0));
+			if (summaryFocusMinutes) summaryFocusMinutes.textContent = String(safeParseInt(summary.focus_minutes_total, 0));
+			if (summaryFocusSessions) summaryFocusSessions.textContent = String(safeParseInt(summary.focus_sessions_total, 0));
 		};
 
 		const renderGauge = (rateValue) => {
@@ -1031,6 +1751,78 @@ document.addEventListener('DOMContentLoaded', () => {
 			});
 		};
 
+		const renderFocusCorrelation = (focusCorrelation) => {
+			const el = document.getElementById('chartFocusCorrelation');
+			if (!el) return;
+			destroyChart('focusCorrelation');
+
+			const points = (focusCorrelation && Array.isArray(focusCorrelation.points))
+				? focusCorrelation.points.map((item) => ({
+					x: safeParseInt(item.focus_minutes, 0),
+					y: safeParseInt(item.procrastination_logs, 0),
+					date: item.date,
+				}))
+				: [];
+
+			charts.focusCorrelation = new Chart(el, {
+				type: 'scatter',
+				data: {
+					datasets: [{
+						label: 'Day',
+						data: points,
+						pointRadius: 6,
+						pointHoverRadius: 8,
+						borderWidth: 0,
+						backgroundColor: 'rgba(99, 102, 241, 0.72)',
+					}],
+				},
+				options: {
+					responsive: true,
+					maintainAspectRatio: false,
+					plugins: {
+						legend: { display: false },
+						tooltip: {
+							callbacks: {
+								label: (ctx) => {
+									const raw = ctx.raw || {};
+									return `${raw.date || ''} | ${safeParseInt(raw.x, 0)} focus min, ${safeParseInt(raw.y, 0)} logs`;
+								},
+							},
+						},
+					},
+					scales: {
+						x: {
+							type: 'linear',
+							beginAtZero: true,
+							title: { display: true, text: 'Focus minutes' },
+							ticks: { precision: 0 },
+						},
+						y: {
+							type: 'linear',
+							beginAtZero: true,
+							title: { display: true, text: 'Procrastination logs' },
+							ticks: { precision: 0 },
+						},
+					},
+				},
+			});
+
+			const coeff = focusCorrelation ? focusCorrelation.coefficient : null;
+			if (focusCorrelationValue) {
+				if (coeff === null || typeof coeff === 'undefined') {
+					focusCorrelationValue.textContent = 'N/A';
+				} else {
+					focusCorrelationValue.textContent = Number(coeff).toFixed(3);
+				}
+			}
+
+			if (focusCorrelationText) {
+				focusCorrelationText.textContent = (focusCorrelation && focusCorrelation.interpretation)
+					? focusCorrelation.interpretation
+					: 'Not enough variance yet to interpret correlation.';
+			}
+		};
+
 		const renderPayload = (payload) => {
 			if (!payload) return;
 			renderSummary(payload.summary || {});
@@ -1040,6 +1832,7 @@ document.addEventListener('DOMContentLoaded', () => {
 			renderMoodEnergy(payload.mood_energy || {});
 			renderMoodDistribution(payload.mood_distribution || []);
 			renderTaskTrend(payload.completion_trend || {});
+			renderFocusCorrelation(payload.focus_correlation || {});
 			renderGauge(payload.completion_rate || 0);
 			setActiveRange(payload.range || 'week');
 			updateExportHref(payload.range || 'week');

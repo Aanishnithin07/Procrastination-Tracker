@@ -1,0 +1,73 @@
+{% extends "layout.html" %}
+
+{% block title %}Focus Mode · ProcrastiNation{% endblock %}
+{% block page_title %}Focus Mode{% endblock %}
+{% block page_subtitle %}Single-task execution with rhythm, recovery, and reflection.{% endblock %}
+
+{% block content %}
+	<div class="focus-page" id="focusPage" data-csrf="{{ csrf_token() }}">
+		<section class="panel focus-shell">
+			<div class="panel-header focus-header">
+				<div>
+					<div class="panel-title">Pomodoro Focus</div>
+					<div class="help">25m focus, 5m break, long break every 4 focus sessions.</div>
+				</div>
+				<div class="badge" id="focusCycleCounter">Focus 1 of 4</div>
+			</div>
+
+			<div class="panel-body focus-body">
+				<div class="focus-task-row">
+					<label class="label" for="focusTaskSelect">What are you working on?</label>
+					<select class="select" id="focusTaskSelect" aria-label="Select active task for focus session">
+						<option value="">No specific task</option>
+						{% for task in focus_tasks %}
+							<option value="{{ task.id }}">
+								{{ task.title }}{% if task.status == 'in_progress' %} · In progress{% endif %}
+							</option>
+						{% endfor %}
+					</select>
+				</div>
+
+				<div class="focus-ring-wrap">
+					<svg class="focus-ring" viewBox="0 0 240 240" role="img" aria-label="Focus timer progress">
+						<circle class="focus-ring-bg" cx="120" cy="120" r="96"></circle>
+						<circle class="focus-ring-progress" id="focusRingProgress" cx="120" cy="120" r="96"></circle>
+					</svg>
+					<div class="focus-timer-core">
+						<div class="focus-phase" id="focusPhaseLabel">Focus session</div>
+						<div class="focus-time" id="focusTimeDisplay">25:00</div>
+					</div>
+				</div>
+
+				<div class="focus-controls">
+					<button class="btnx btnx-primary" type="button" id="focusStartBtn">Start</button>
+					<button class="btnx" type="button" id="focusPauseBtn" disabled>Pause</button>
+					<button class="btnx" type="button" id="focusSkipBtn" disabled>Skip</button>
+					<button class="btnx btnx-danger" type="button" id="focusAbandonBtn" disabled>Abandon</button>
+				</div>
+
+				<div class="focus-row-meta">
+					<button class="btnx" type="button" id="focusSoundToggle" aria-pressed="false">Ambient sound: Off</button>
+					<div class="help">Shortcuts: <strong>Space</strong> pause/resume · <strong>Esc</strong> abandon</div>
+				</div>
+
+				<div class="focus-complete-prompt" id="focusCompletionPrompt" hidden>
+					<div class="h2">Session complete</div>
+					<div class="muted">Did you complete the task?</div>
+					<div class="focus-complete-actions">
+						<button class="btnx btnx-primary" type="button" id="focusTaskDoneYes">Yes, mark as done</button>
+						<button class="btnx" type="button" id="focusTaskDoneNo">Not yet</button>
+					</div>
+				</div>
+
+				<div class="focus-status-note help" id="focusStatusNote">Ready when you are.</div>
+			</div>
+		</section>
+
+		<div class="focus-celebration" id="focusCelebration" aria-hidden="true"></div>
+	</div>
+{% endblock %}
+
+{% block scripts %}
+<script id="focus-boot" type="application/json">{{ focus_boot|tojson }}</script>
+{% endblock %}
