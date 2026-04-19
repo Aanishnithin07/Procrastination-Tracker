@@ -25,22 +25,6 @@ Live-ready: deploy on GitHub Pages or Netlify in minutes.
 4) Use “Quick suggestion” for a nudge or encouragement.
 
 
-Then in GitHub:
-- Ensure Actions are enabled.
-- Settings → Pages → Source: “Deploy from a branch”, branch: `gh-pages`.
-
-Manual alternative (no Actions):
-```bash
-git subtree push --prefix . origin gh-pages
-```
-
-## Deploy to Netlify
-- Drag-and-drop the project folder into Netlify, or use CLI:
-```bash
-npm install -g netlify-cli
-netlify deploy --prod --dir .
-```
-
 ## Accessibility & Responsiveness
 - Labeled form controls; keyboard operable
 - Sufficient color contrast; focus states
