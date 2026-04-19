@@ -28,7 +28,10 @@ app.config["SESSION_FILE_DIR"] = str(session_dir)
 Session(app)
 
 # Configure CS50 Library to use SQLite database
-db = SQL("sqlite:///procrastination.db")
+# cs50.SQL requires that the SQLite file already exists.
+db_path = Path(__file__).resolve().with_name("procrastination.db")
+db_path.touch(exist_ok=True)
+db = SQL(f"sqlite:///{db_path}")
 
 # Logging (minimal but useful)
 logging.basicConfig(
