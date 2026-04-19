@@ -24,15 +24,7 @@ Live-ready: deploy on GitHub Pages or Netlify in minutes.
 3) Review stats and insights; export/import JSON anytime.
 4) Use “Quick suggestion” for a nudge or encouragement.
 
-## Deploy to GitHub Pages
-Automated (recommended) via GitHub Actions included at `.github/workflows/gh-pages.yml`:
-```bash
-# Initialize and push to your own GitHub repo
-cd "/Users/aanishnithin/Procrastination Tracker/procrasti-track"
-git branch -m main
-git remote add origin git@github.com:<your-user>/<your-repo>.git
-git push -u origin main
-```
+
 Then in GitHub:
 - Ensure Actions are enabled.
 - Settings → Pages → Source: “Deploy from a branch”, branch: `gh-pages`.
