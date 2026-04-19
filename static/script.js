@@ -3,7 +3,93 @@ function safeParseInt(value, fallback) {
 	return Number.isFinite(n) ? n : fallback;
 }
 
+function qs(id) {
+	return document.getElementById(id);
+}
+
+function getInitialTheme() {
+	const saved = window.localStorage.getItem('theme');
+	if (saved === 'light' || saved === 'dark') return saved;
+	return null;
+}
+
+function applyTheme(theme) {
+	const root = document.documentElement;
+	if (!theme) {
+		root.removeAttribute('data-theme');
+		return;
+	}
+	root.setAttribute('data-theme', theme);
+}
+
+function toast(message, variant = 'info', title = 'Notification') {
+	const root = qs('toast-root');
+	if (!root || !message) return;
+
+	const el = document.createElement('div');
+	el.className = `toast toast-${variant}`;
+	el.innerHTML = `
+		<div class="toast-dot"></div>
+		<div class="toast-body">
+			<div class="toast-title">${title}</div>
+			<div class="toast-msg"></div>
+		</div>
+		<button class="toast-x" type="button" aria-label="Dismiss">✕</button>
+	`;
+	el.querySelector('.toast-msg').textContent = message;
+
+	const remove = () => {
+		el.style.opacity = '0';
+		el.style.transform = 'translateY(-6px)';
+		window.setTimeout(() => el.remove(), 180);
+	};
+
+	el.querySelector('.toast-x').addEventListener('click', remove);
+	root.appendChild(el);
+	window.setTimeout(remove, 4200);
+}
+
 document.addEventListener('DOMContentLoaded', () => {
+	// Theme toggle
+	const savedTheme = getInitialTheme();
+	applyTheme(savedTheme);
+
+	const themeToggle = qs('themeToggle');
+	if (themeToggle) {
+		themeToggle.addEventListener('click', () => {
+			const current = document.documentElement.getAttribute('data-theme');
+			const next = current === 'dark' ? 'light' : 'dark';
+			applyTheme(next);
+			window.localStorage.setItem('theme', next);
+			toast(`Switched to ${next} mode`, 'info', 'Theme');
+		});
+	}
+
+	// Sidebar collapse
+	const sidebar = qs('sidebar');
+	const sidebarToggle = qs('sidebarToggle');
+	if (sidebar && sidebarToggle) {
+		const collapsed = window.localStorage.getItem('sidebarCollapsed') === '1';
+		if (collapsed) sidebar.classList.add('is-collapsed');
+		sidebarToggle.addEventListener('click', () => {
+			sidebar.classList.toggle('is-collapsed');
+			window.localStorage.setItem('sidebarCollapsed', sidebar.classList.contains('is-collapsed') ? '1' : '0');
+		});
+	}
+
+	// Flash -> toast system
+	const flashData = qs('flash-data');
+	if (flashData) {
+		try {
+			const messages = JSON.parse(flashData.textContent || '[]');
+			if (Array.isArray(messages)) {
+				messages.forEach((m) => toast(m, 'info', 'Update'));
+			}
+		} catch {
+			// ignore
+		}
+	}
+
 	// Generic confirm for destructive actions
 	document.body.addEventListener('click', (e) => {
 		const btn = e.target.closest('button[data-confirm]');
@@ -43,6 +129,9 @@ document.addEventListener('DOMContentLoaded', () => {
 	// Analytics charts
 	if (window.PROCRASTINATION_ANALYTICS && typeof Chart !== 'undefined') {
 		const { hourly_data, mood_data, energy_data, env_data } = window.PROCRASTINATION_ANALYTICS;
+
+		// Remove skeletons once we render
+		document.querySelectorAll('.chart-wrap.is-loading').forEach((el) => el.classList.remove('is-loading'));
 
 		const hourlyLabels = (hourly_data || []).map((d) => `${d.hour}:00`);
 		const hourlyCounts = (hourly_data || []).map((d) => d.count);

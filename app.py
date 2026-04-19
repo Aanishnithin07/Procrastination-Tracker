@@ -41,6 +41,80 @@ logging.basicConfig(
 logger = logging.getLogger("procrastination")
 
 
+def _get_user_initials(username: str) -> str:
+    if not username:
+        return "?"
+    parts = [p for p in username.replace("_", " ").split(" ") if p]
+    if len(parts) >= 2:
+        return (parts[0][0] + parts[1][0]).upper()
+    return username[:2].upper()
+
+
+def _activity_streak_days(user_id: int) -> int:
+    """Consecutive-day streak based on logging procrastination episodes.
+
+    Counts consecutive days ending today, or (if no log today) ending yesterday.
+    """
+    rows = db.execute(
+        """
+        SELECT date(timestamp) as day
+        FROM procrastination_logs
+        WHERE user_id = ?
+        GROUP BY date(timestamp)
+        ORDER BY day DESC
+        LIMIT 370
+        """,
+        user_id,
+    )
+
+    day_set = {r["day"] for r in rows if r.get("day")}
+    if not day_set:
+        return 0
+
+    today = datetime.utcnow().date()
+    start = today
+    if start.isoformat() not in day_set:
+        start = today.fromordinal(today.toordinal() - 1)
+        if start.isoformat() not in day_set:
+            return 0
+
+    streak = 0
+    cursor = start
+    while cursor.isoformat() in day_set:
+        streak += 1
+        cursor = cursor.fromordinal(cursor.toordinal() - 1)
+    return streak
+
+
+@app.context_processor
+def inject_shell_context():
+    user = None
+    streak_days = 0
+    if session.get("user_id"):
+        username = session.get("username")
+        if not username:
+            rows = db.execute("SELECT username FROM users WHERE id = ?", session["user_id"])
+            if rows:
+                username = rows[0]["username"]
+                session["username"] = username
+
+        user = {
+            "id": session.get("user_id"),
+            "username": username or "User",
+            "initials": _get_user_initials(username or "User"),
+        }
+        try:
+            streak_days = _activity_streak_days(session["user_id"])
+        except Exception:
+            logger.exception("Failed to compute streak")
+            streak_days = 0
+
+    return {
+        "current_user": user,
+        "streak_days": streak_days,
+    }
+
+
 def generate_csrf_token():
     token = session.get("_csrf_token")
     if not token:
@@ -466,6 +540,7 @@ def login():
             return apology("invalid username and/or password", 403)
 
         session["user_id"] = rows[0]["id"]
+        session["username"] = rows[0]["username"]
         next_url = request.args.get("next")
         if next_url and isinstance(next_url, str) and next_url.startswith("/"):
             return redirect(next_url)
@@ -506,6 +581,7 @@ def register():
             return apology("username already exists", 400)
 
         session["user_id"] = new_user_id
+        session["username"] = username
         flash("🎉 Welcome to ProcrastiNation Analytics!")
         return redirect("/")
     
